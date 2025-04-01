@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 from utils.helpers import create_chart, regenerate_chart, generate_code
-from utils.agents import get_response
+# 直接使用新的流式响应代理，不再使用旧版
+from utils.stream_agents import get_streaming_response
 import os
 import uuid
 import re
@@ -199,8 +200,9 @@ if st.session_state.file_uploaded and st.session_state.descriptions_provided:
                                 code_part, text_part = part.split("```", 1)
                                 # 显示代码块
                                 st.code(code_part.strip(), language="python")
-                                # 添加"应用代码"按钮
-                                if st.button("应用此代码", key=f"apply_code_{i}_{hash(code_part)}"):
+                                # 添加"应用代码"按钮，使用消息在历史记录中的索引和代码块的索引来确保key的唯一性
+                                button_key = f"apply_code_{st.session_state.messages.index(message)}_{i}_{len(code_part)}"
+                                if st.button("应用此代码", key=button_key):
                                     st.session_state.visualization_code = code_part.strip()
                                     st.rerun()
                                 # 显示代码块后的文本
@@ -235,10 +237,10 @@ if st.session_state.file_uploaded and st.session_state.descriptions_provided:
                 with st.chat_message("assistant"):
                     message_placeholder = st.empty()
                     
-                    # 调用AI获取回复
-                    response = get_response(
-                        user_message=st.session_state.current_input, 
-                        data_context=data_context, 
+                    # 使用新的真正流式响应
+                    response = get_streaming_response(
+                        user_message=st.session_state.current_input,
+                        data_context=data_context,
                         message_placeholder=message_placeholder
                     )
                     
