@@ -1,0 +1,26 @@
+# Python缓存文件
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.cpython-*.pyc
+
+# 项目特定目录
+.cache/
+codeexe/
+data/
+images/
+
+# 环境文件
+.env
+.venv
+env/
+venv/
+ENV/
+
+# 编辑器和系统文件
+.idea/
+.vscode/
+*.swp
+.DS_Store
