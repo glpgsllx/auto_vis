@@ -1,15 +1,13 @@
 import streamlit as st
 import pandas as pd
 from utils.helpers import create_chart, regenerate_chart, generate_code
-# 直接使用新的流式响应代理，不再使用旧版
 from utils.stream_agents import get_streaming_response
 import os
 import uuid
 import re
 
-st.set_page_config(layout="wide")  # 设置为宽屏模式
+st.set_page_config(layout="wide")  
 
-# 自定义CSS样式去除线框并调整界面样式
 st.markdown("""
 <style>
     .block-container {
