@@ -71,22 +71,65 @@ if "temp_response" not in st.session_state:  # 临时存储AI响应
     st.session_state.temp_response = ""
 if "should_regenerate" not in st.session_state:  # 标记是否应该重新生成图表
     st.session_state.should_regenerate = False
+if "file_type" not in st.session_state:  # 存储文件类型
+    st.session_state.file_type = None
 
 # 仅在初始阶段显示文件上传组件
 if not st.session_state.file_uploaded:
-    uploaded_file = st.file_uploader("请上传您的CSV文件", type=['csv'])
+    # 添加文件类型选择下拉菜单
+    file_type = st.selectbox(
+        "请选择数据文件类型",
+        ["CSV", "Excel"],
+        index=0
+    )
+    
+    # 根据选择的文件类型显示不同的文件上传器
+    if file_type == "CSV":
+        uploaded_file = st.file_uploader("请上传您的CSV文件", type=['csv'])
+    else:  # Excel
+        uploaded_file = st.file_uploader("请上传您的Excel文件", type=['xlsx', 'xls'])
 
-    # 用户上传.csv文件
+    # 用户上传文件
     if uploaded_file is not None:
+        # 保存文件类型
+        st.session_state.file_type = file_type
+        
+        # 根据文件类型确定文件扩展名
+        file_extension = '.csv' if file_type == "CSV" else '.xlsx'
+        
         # 生成唯一文件名并保存上传的文件到本地
-        file_name = f"data/{uuid.uuid4().hex}.csv"
+        file_name = f"data/{uuid.uuid4().hex}{file_extension}"
         with open(file_name, "wb") as f:
             f.write(uploaded_file.getbuffer())
         
-        # 读取数据并初始化相关状态
-        st.session_state.df = pd.read_csv(file_name) # 更新df
-        st.session_state.file_uploaded = True # 更新文件上传状态
-        st.session_state.file_path = file_name # 更新文件名
+        # 根据文件类型读取数据
+        try:
+            if file_type == "CSV":
+                st.session_state.df = pd.read_csv(file_name)
+            else:  # Excel
+                # 添加更详细的调试信息
+                st.write(f"正在读取文件: {file_name}")
+                st.write(f"文件大小: {os.path.getsize(file_name)} 字节")
+                
+                # 尝试使用openpyxl引擎读取
+                try:
+                    st.session_state.df = pd.read_excel(file_name, engine='openpyxl')
+                except Exception as e1:
+                    st.write(f"使用openpyxl引擎失败: {str(e1)}")
+                    # 尝试使用xlrd引擎
+                    try:
+                        st.session_state.df = pd.read_excel(file_name, engine='xlrd')
+                    except Exception as e2:
+                        st.write(f"使用xlrd引擎失败: {str(e2)}")
+                        raise Exception(f"无法读取Excel文件。openpyxl错误: {str(e1)}, xlrd错误: {str(e2)}")
+        except Exception as e:
+            st.error(f"读取文件时出错: {str(e)}")
+            st.error("请确保文件格式正确且包含数据")
+            st.stop()
+        
+        # 更新状态
+        st.session_state.file_uploaded = True  # 更新文件上传状态
+        st.session_state.file_path = file_name  # 更新文件名
         # 为每一列创建空描述字典
         st.session_state.column_descriptions = {col: "" for col in st.session_state.df.columns}
         st.rerun()  # 重新运行应用以更新UI
