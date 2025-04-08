@@ -2,9 +2,11 @@ import streamlit as st
 import pandas as pd
 from utils.helpers import create_chart, regenerate_chart, generate_code
 from utils.stream_agents import get_streaming_response
+from utils.db import connect_mysql, get_mysql_tables, get_mysql_table_data, close_mysql_connection
 import os
 import uuid
 import re
+import time
 
 st.set_page_config(layout="wide")  
 
@@ -73,66 +75,336 @@ if "should_regenerate" not in st.session_state:  # 标记是否应该重新生�
     st.session_state.should_regenerate = False
 if "file_type" not in st.session_state:  # 存储文件类型
     st.session_state.file_type = None
+if "mysql_connection" not in st.session_state:  # 存储MySQL连接
+    st.session_state.mysql_connection = None
+if "mysql_tables" not in st.session_state:  # 存储MySQL表列表
+    st.session_state.mysql_tables = None
+if "mysql_selected_table" not in st.session_state:
+    st.session_state.mysql_selected_table = None
+if "mysql_connection_form_submitted" not in st.session_state:
+    st.session_state.mysql_connection_form_submitted = False
+if "mysql_data_fetched" not in st.session_state:
+    st.session_state.mysql_data_fetched = False
+if "mysql_fetch_error" not in st.session_state:
+    st.session_state.mysql_fetch_error = None
+if "mysql_fetch_progress" not in st.session_state:
+    st.session_state.mysql_fetch_progress = 0
+if "mysql_fetch_status" not in st.session_state:
+    st.session_state.mysql_fetch_status = ""
+if "mysql_connection_info" not in st.session_state:
+    st.session_state.mysql_connection_info = None
+if "mysql_step" not in st.session_state:
+    st.session_state.mysql_step = "connect"  # 可能的值: "connect", "select_table", "fetch_data", "data_loaded"
 
 # 仅在初始阶段显示文件上传组件
 if not st.session_state.file_uploaded:
-    # 添加文件类型选择下拉菜单
-    file_type = st.selectbox(
-        "请选择数据文件类型",
-        ["CSV", "Excel"],
+    # 添加数据来源选择
+    data_source = st.radio(
+        "请选择数据来源",
+        ["本地文件", "MySQL数据库"],
         index=0
     )
     
-    # 根据选择的文件类型显示不同的文件上传器
-    if file_type == "CSV":
-        uploaded_file = st.file_uploader("请上传您的CSV文件", type=['csv'])
-    else:  # Excel
-        uploaded_file = st.file_uploader("请上传您的Excel文件", type=['xlsx', 'xls'])
+    if data_source == "本地文件":
+        # 添加文件类型选择下拉菜单
+        file_type = st.selectbox(
+            "请选择数据文件类型",
+            ["CSV", "Excel"],
+            index=0
+        )
+        
+        # 根据选择的文件类型显示不同的文件上传器
+        if file_type == "CSV":
+            uploaded_file = st.file_uploader("请上传您的CSV文件", type=['csv'])
+        else:  # Excel
+            uploaded_file = st.file_uploader("请上传您的Excel文件", type=['xlsx', 'xls'])
 
-    # 用户上传文件
-    if uploaded_file is not None:
-        # 保存文件类型
-        st.session_state.file_type = file_type
-        
-        # 根据文件类型确定文件扩展名
-        file_extension = '.csv' if file_type == "CSV" else '.xlsx'
-        
-        # 生成唯一文件名并保存上传的文件到本地
-        file_name = f"data/{uuid.uuid4().hex}{file_extension}"
-        with open(file_name, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        
-        # 根据文件类型读取数据
-        try:
-            if file_type == "CSV":
-                st.session_state.df = pd.read_csv(file_name)
-            else:  # Excel
-                # 添加更详细的调试信息
-                st.write(f"正在读取文件: {file_name}")
-                st.write(f"文件大小: {os.path.getsize(file_name)} 字节")
-                
-                # 尝试使用openpyxl引擎读取
-                try:
-                    st.session_state.df = pd.read_excel(file_name, engine='openpyxl')
-                except Exception as e1:
-                    st.write(f"使用openpyxl引擎失败: {str(e1)}")
-                    # 尝试使用xlrd引擎
+        # 用户上传文件
+        if uploaded_file is not None:
+            # 保存文件类型
+            st.session_state.file_type = file_type
+            
+            # 根据文件类型确定文件扩展名
+            file_extension = '.csv' if file_type == "CSV" else '.xlsx'
+            
+            # 生成唯一文件名并保存上传的文件到本地
+            file_name = f"data/{uuid.uuid4().hex}{file_extension}"
+            with open(file_name, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            
+            # 根据文件类型读取数据
+            try:
+                if file_type == "CSV":
+                    st.session_state.df = pd.read_csv(file_name)
+                else:  # Excel
+                    # 添加更详细的调试信息
+                    st.write(f"正在读取文件: {file_name}")
+                    st.write(f"文件大小: {os.path.getsize(file_name)} 字节")
+                    
+                    # 尝试使用openpyxl引擎读取
                     try:
-                        st.session_state.df = pd.read_excel(file_name, engine='xlrd')
-                    except Exception as e2:
-                        st.write(f"使用xlrd引擎失败: {str(e2)}")
-                        raise Exception(f"无法读取Excel文件。openpyxl错误: {str(e1)}, xlrd错误: {str(e2)}")
-        except Exception as e:
-            st.error(f"读取文件时出错: {str(e)}")
-            st.error("请确保文件格式正确且包含数据")
-            st.stop()
+                        st.session_state.df = pd.read_excel(file_name, engine='openpyxl')
+                    except Exception as e1:
+                        st.write(f"使用openpyxl引擎失败: {str(e1)}")
+                        # 尝试使用xlrd引擎
+                        try:
+                            st.session_state.df = pd.read_excel(file_name, engine='xlrd')
+                        except Exception as e2:
+                            st.write(f"使用xlrd引擎失败: {str(e2)}")
+                            raise Exception(f"无法读取Excel文件。openpyxl错误: {str(e1)}, xlrd错误: {str(e2)}")
+            except Exception as e:
+                st.error(f"读取文件时出错: {str(e)}")
+                st.error("请确保文件格式正确且包含数据")
+                st.stop()
+            
+            # 更新状态
+            st.session_state.file_uploaded = True  # 更新文件上传状态
+            st.session_state.file_path = file_name  # 更新文件名
+            # 为每一列创建空描述字典
+            st.session_state.column_descriptions = {col: "" for col in st.session_state.df.columns}
+            st.rerun()  # 重新运行应用以更新UI
+    
+    else:  # MySQL数据库
+        # 初始化MySQL相关的session state变量
+        if "mysql_connection" not in st.session_state:
+            st.session_state.mysql_connection = None
+        if "mysql_tables" not in st.session_state:
+            st.session_state.mysql_tables = None
+        if "mysql_selected_table" not in st.session_state:
+            st.session_state.mysql_selected_table = None
+        if "mysql_connection_form_submitted" not in st.session_state:
+            st.session_state.mysql_connection_form_submitted = False
+        if "mysql_data_fetched" not in st.session_state:
+            st.session_state.mysql_data_fetched = False
+        if "mysql_fetch_error" not in st.session_state:
+            st.session_state.mysql_fetch_error = None
+        if "mysql_fetch_progress" not in st.session_state:
+            st.session_state.mysql_fetch_progress = 0
+        if "mysql_fetch_status" not in st.session_state:
+            st.session_state.mysql_fetch_status = ""
+        if "mysql_connection_info" not in st.session_state:
+            st.session_state.mysql_connection_info = None
+        if "mysql_step" not in st.session_state:
+            st.session_state.mysql_step = "connect"  # 可能的值: "connect", "select_table", "fetch_data", "data_loaded"
         
-        # 更新状态
-        st.session_state.file_uploaded = True  # 更新文件上传状态
-        st.session_state.file_path = file_name  # 更新文件名
-        # 为每一列创建空描述字典
-        st.session_state.column_descriptions = {col: "" for col in st.session_state.df.columns}
-        st.rerun()  # 重新运行应用以更新UI
+        # 步骤1: 连接数据库
+        if st.session_state.mysql_step == "connect":
+            st.subheader("步骤1: 连接MySQL数据库")
+            
+            # 创建输入字段
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                host = st.text_input("服务器地址", value="localhost")
+                port = st.number_input("端口", min_value=1, max_value=65535, value=3306)
+                user = st.text_input("用户名")
+                password = st.text_input("密码", type="password")
+            
+            with col2:
+                database = st.text_input("数据库名")
+                charset = st.selectbox(
+                    "字符集",
+                    ["utf8mb4", "utf8", "latin1", "gbk"],
+                    index=0
+                )
+            
+            # 连接按钮
+            if st.button("连接数据库"):
+                # 保存连接信息到session state
+                st.session_state.mysql_connection_info = {
+                    "host": host,
+                    "port": port,
+                    "user": user,
+                    "password": password,
+                    "database": database,
+                    "charset": charset
+                }
+                
+                # 尝试连接MySQL数据库
+                connection, error = connect_mysql(
+                    host=host,
+                    port=port,
+                    user=user,
+                    password=password,
+                    database=database,
+                    charset=charset
+                )
+                
+                if error:
+                    st.error(f"连接失败: {error}")
+                else:
+                    # 保存连接对象到session state
+                    st.session_state.mysql_connection = connection
+                    
+                    # 获取数据库中的所有表
+                    tables = get_mysql_tables(connection)
+                    
+                    if not tables:
+                        st.warning("数据库中没有找到表")
+                    else:
+                        # 保存表列表到session state
+                        st.session_state.mysql_tables = tables
+                        st.session_state.mysql_connection_form_submitted = True
+                        st.session_state.mysql_step = "select_table"
+                        st.success("数据库连接成功！请选择要分析的表。")
+                        st.rerun()
+        
+        # 步骤2: 选择表
+        elif st.session_state.mysql_step == "select_table":
+            st.subheader("步骤2: 选择要分析的表")
+            st.info(f"已连接到 {st.session_state.mysql_connection_info['database']} 数据库")
+            
+            # 显示表选择下拉菜单
+            selected_table = st.selectbox("请选择要分析的表", st.session_state.mysql_tables)
+            
+            # 保存选择的表到session state
+            st.session_state.mysql_selected_table = selected_table
+            
+            # 创建两列布局
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # 获取数据按钮
+                if st.button("获取表数据"):
+                    st.session_state.mysql_step = "fetch_data"
+                    st.rerun()
+            
+            with col2:
+                # 断开连接按钮
+                if st.button("断开连接"):
+                    # 关闭数据库连接
+                    close_mysql_connection(st.session_state.mysql_connection)
+                    # 清除session state
+                    st.session_state.mysql_connection = None
+                    st.session_state.mysql_tables = None
+                    st.session_state.mysql_selected_table = None
+                    st.session_state.mysql_connection_form_submitted = False
+                    st.session_state.mysql_data_fetched = False
+                    st.session_state.mysql_connection_info = None
+                    st.session_state.mysql_step = "connect"
+                    st.rerun()
+        
+        # 步骤3: 获取数据
+        elif st.session_state.mysql_step == "fetch_data":
+            st.subheader("步骤3: 获取表数据")
+            st.info(f"正在从 {st.session_state.mysql_connection_info['database']} 数据库的 {st.session_state.mysql_selected_table} 表中获取数据")
+            
+            # 显示进度条
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            try:
+                status_text.text("正在连接数据库...")
+                progress_bar.progress(10)
+                
+                # 检查连接是否有效
+                if not st.session_state.mysql_connection or not st.session_state.mysql_connection.is_connected():
+                    # 尝试重新连接
+                    connection, error = connect_mysql(**st.session_state.mysql_connection_info)
+                    
+                    if error:
+                        st.error(f"重新连接失败: {error}")
+                        st.session_state.mysql_connection = None
+                        st.session_state.mysql_tables = None
+                        st.session_state.mysql_connection_form_submitted = False
+                        st.session_state.mysql_step = "connect"
+                        st.rerun()
+                        st.stop()
+                    else:
+                        st.session_state.mysql_connection = connection
+                
+                status_text.text("正在获取表数据...")
+                progress_bar.progress(30)
+                
+                # 从选定的表中获取数据，限制最大行数为1000
+                try:
+                    df, error = get_mysql_table_data(st.session_state.mysql_connection, st.session_state.mysql_selected_table, limit=1000)
+                    
+                    if error:
+                        st.error(f"获取数据失败: {error}")
+                        progress_bar.progress(100)
+                        st.session_state.mysql_step = "select_table"
+                        st.rerun()
+                        st.stop()
+                        
+                    if df is None or df.empty:
+                        st.error("获取到的数据为空")
+                        progress_bar.progress(100)
+                        st.session_state.mysql_step = "select_table"
+                        st.rerun()
+                        st.stop()
+                        
+                    progress_bar.progress(70)
+                    status_text.text("数据处理中...")
+                    progress_bar.progress(90)
+                    
+                    # 保存数据到session state
+                    st.session_state.df = df
+                    st.session_state.file_uploaded = True
+                    st.session_state.file_type = "mysql"
+                    # 为每一列创建空描述字典
+                    st.session_state.column_descriptions = {col: "" for col in st.session_state.df.columns}
+                    st.session_state.mysql_data_fetched = True
+                    
+                    status_text.text("数据获取成功！")
+                    progress_bar.progress(100)
+                    
+                    # 显示数据预览
+                    st.subheader("数据预览")
+                    st.dataframe(st.session_state.df.head())
+                    
+                    # 显示数据统计信息
+                    st.subheader("数据统计")
+                    st.write(f"总行数: {len(st.session_state.df)}")
+                    st.write(f"总列数: {len(st.session_state.df.columns)}")
+                    
+                    # 设置步骤为数据已加载
+                    st.session_state.mysql_step = "data_loaded"
+                    
+                    # 添加继续按钮
+                    if st.button("继续分析"):
+                        st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"获取表数据时发生错误: {str(e)}")
+                    progress_bar.progress(100)
+                    st.session_state.mysql_step = "select_table"
+                    st.rerun()
+                    st.stop()
+                    
+            except Exception as e:
+                st.error(f"发生错误: {str(e)}")
+                progress_bar.progress(100)
+                st.session_state.mysql_step = "select_table"
+                st.rerun()
+        
+        # 步骤4: 数据已加载
+        elif st.session_state.mysql_step == "data_loaded":
+            st.subheader("数据已加载")
+            st.success(f"已成功从 {st.session_state.mysql_connection_info['database']} 数据库的 {st.session_state.mysql_selected_table} 表中获取数据")
+            
+            # 显示数据预览
+            st.subheader("数据预览")
+            st.dataframe(st.session_state.df.head())
+            
+            # 显示数据统计信息
+            st.subheader("数据统计")
+            st.write(f"总行数: {len(st.session_state.df)}")
+            st.write(f"总列数: {len(st.session_state.df.columns)}")
+            
+            # 添加断开连接按钮
+            if st.button("断开连接"):
+                # 关闭数据库连接
+                close_mysql_connection(st.session_state.mysql_connection)
+                # 清除session state
+                st.session_state.mysql_connection = None
+                st.session_state.mysql_tables = None
+                st.session_state.mysql_selected_table = None
+                st.session_state.mysql_connection_form_submitted = False
+                st.session_state.mysql_data_fetched = False
+                st.session_state.mysql_connection_info = None
+                st.session_state.mysql_step = "connect"
+                st.rerun()
 
 # 用户填写描述表单
 if st.session_state.file_uploaded and not st.session_state.descriptions_provided:
@@ -335,3 +607,8 @@ if st.session_state.file_uploaded and st.session_state.descriptions_provided:
                     if st.button("重新生成图表"):
                         st.session_state.should_regenerate = True
                         st.rerun()
+
+# 在页面底部添加清理代码，确保MySQL连接被正确关闭
+if st.session_state.mysql_connection:
+    close_mysql_connection(st.session_state.mysql_connection)
+    st.session_state.mysql_connection = None

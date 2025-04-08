@@ -32,61 +32,104 @@ def execute_code(code, image_id=None):
         该函数会在codeexe目录下执行代码，并等待图片生成
         最多等待10秒
     """
-    # 确保codeexe目录存在
-    if not os.path.exists('codeexe'):
-        os.makedirs('codeexe')
-    
-    # 生成图片ID
-    if image_id is None:
-        image_id = str(uuid.uuid4().hex)
-    
-    # 修改代码中的图片保存路径
-    modified_code = code.replace("'answer.png'", f"'chart_{image_id}.png'")
-    
-    # 创建代码执行agent
-    code_executor = ConversableAgent(
-        "code_executor",
-        llm_config=False,
-        code_execution_config={"executor": executor},
-        human_input_mode="NEVER"
-    )
-    
-    # 执行代码
-    message_with_code = f"""执行以下Python代码：
+    try:
+        # 确保codeexe目录存在
+        if not os.path.exists('codeexe'):
+            os.makedirs('codeexe')
+        
+        # 生成图片ID
+        if image_id is None:
+            image_id = str(uuid.uuid4().hex)
+        
+        # 修改代码中的图片保存路径
+        modified_code = code.replace("'answer.png'", f"'chart_{image_id}.png'")
+        
+        # 如果是MySQL查询代码，需要替换连接信息
+        if "mysql.connector.connect" in modified_code and "mysql_connection_info" in st.session_state:
+            # 获取MySQL连接信息
+            conn_info = st.session_state.mysql_connection_info
+            
+            # 替换连接信息
+            modified_code = modified_code.replace(
+                'host="localhost"',
+                f'host="{conn_info["host"]}"'
+            ).replace(
+                'user="root"',
+                f'user="{conn_info["user"]}"'
+            ).replace(
+                'password="password"',
+                f'password="{conn_info["password"]}"'
+            ).replace(
+                'database="database_name"',
+                f'database="{conn_info["database"]}"'
+            )
+            
+            # 添加调试信息
+            print(f"MySQL连接信息: {conn_info}")
+        
+        # 打印修改后的代码，方便调试
+        print("执行的代码:")
+        print("-" * 50)
+        print(modified_code)
+        print("-" * 50)
+        
+        # 保存代码到临时文件
+        temp_code_file = f'codeexe/code_{image_id}.py'
+        with open(temp_code_file, 'w') as f:
+            f.write(modified_code)
+        
+        # 创建代码执行agent
+        code_executor = ConversableAgent(
+            "code_executor",
+            llm_config=False,
+            code_execution_config={"executor": executor},
+            human_input_mode="NEVER"
+        )
+        
+        # 执行代码
+        message_with_code = f"""执行以下Python代码：
 ```python
 {modified_code}
 ```"""
-    
-    reply = code_executor.generate_reply(messages=[{"role": "user", "content": message_with_code}])
-    
-    # 等待图片生成
-    image_path = f'codeexe/chart_{image_id}.png'
-    for _ in range(10):
-        if os.path.exists(image_path):
-            return True, image_path
-        time.sleep(1)
-    
-    return False, None
+        
+        reply = code_executor.generate_reply(messages=[{"role": "user", "content": message_with_code}])
+        
+        # 等待图片生成
+        image_path = f'codeexe/chart_{image_id}.png'
+        for _ in range(10):
+            if os.path.exists(image_path):
+                return True, image_path
+            time.sleep(1)
+        
+        print(f"图片未生成，代码执行结果：{reply}")
+        return False, None
+    except Exception as e:
+        print(f"执行代码时出错：{str(e)}")
+        return False, None
 
 def generate_code(file_path, column_descriptions):
     """生成可视化代码的函数
     
     Args:
-        file_path (str): CSV文件的路径
+        file_path (str): 数据文件的路径，支持CSV或Excel
         column_descriptions (dict): 数据列的描述信息，格式为 {列名: 描述}
         
     Returns:
         tuple: (生成的代码, 错误信息)
             - 如果成功生成代码，返回 (代码字符串, None)
             - 如果失败，返回 (None, 错误信息字符串)
-            
-    Note:
-        该函数会读取CSV文件的前5行作为样本数据，用于生成可视化代码
-        使用Qwen模型生成代码
     """
-    # 读取CSV文件的前5行作为样本数据
+    # 根据文件扩展名确定文件类型
+    file_extension = os.path.splitext(file_path)[1].lower()
+    
     try:
-        df_sample = pd.read_csv(file_path, nrows=5)
+        # 根据文件类型选择不同的读取方法
+        if file_extension == '.csv':
+            df_sample = pd.read_csv(file_path, nrows=5)
+        elif file_extension in ['.xlsx', '.xls']:
+            df_sample = pd.read_excel(file_path, nrows=5)
+        else:
+            return None, f"不支持的文件类型: {file_extension}"
     except Exception as e:
         return None, f"无法读取数据文件：{str(e)}"
     
@@ -104,23 +147,40 @@ def generate_code(file_path, column_descriptions):
         col_type = df_sample[col].dtype
         columns_info += f"- {col} ({col_type}): {desc}\n"
     
+    # 根据文件类型生成不同的代码模板
+    if file_extension == '.csv':
+        file_read_code = f"df = pd.read_csv('../{file_path}')"
+    else:  # Excel文件
+        file_read_code = f"df = pd.read_excel('../{file_path}')"
+    
     data_info = """
-数据文件路径: ../{}
+    数据文件路径: ../{}
+    文件类型: {}
 
-数据列描述:
-{}
+    数据列描述:
+    {}
 
-数据示例:
-{}
+    数据示例:
+    {}
 
-请生成合适的Python代码来可视化这些数据。代码必须：
-1. 导入必要的库（pandas, matplotlib）
-2. 读取CSV文件 
-3. 创建合适的可视化
-4. 将图表保存为'answer.png'
+    请生成合适的Python代码来可视化这些数据。代码必须：
+    1. 导入必要的库（pandas, matplotlib）
+    2. 读取数据文件（使用正确的函数读取{}文件）
+    3. 创建合适的可视化
+    4. 将图表保存为'answer.png'
 
-请仅生成代码！不要生成其他内容！也不要生成```python```这样的符号！
-""".format(file_path, columns_info, df_sample.to_string())
+    读取文件的代码应该是:
+    {}
+
+    请仅生成代码！不要生成其他内容！也不要生成```python```这样的符号！
+    """.format(
+        file_path, 
+        "CSV" if file_extension == '.csv' else "Excel", 
+        columns_info, 
+        df_sample.to_string(),
+        "CSV" if file_extension == '.csv' else "Excel",
+        file_read_code
+    )
     
     # 生成代码
     code_response = code_generator.generate_reply(messages=[{"role": "user", "content": data_info}])
@@ -143,7 +203,25 @@ def create_chart(file_path=None, column_descriptions=None):
         该函数会先调用generate_code生成可视化代码，然后调用execute_code执行代码生成图表
         整个过程包括代码生成和图表生成两个步骤
     """
-    if file_path is None or not os.path.exists(file_path):
+    # 检查数据源类型
+    if file_path is None:
+        # 如果没有文件路径，可能是MySQL数据源
+        if 'df' in st.session_state and st.session_state.df is not None:
+            # 使用DataFrame直接生成代码
+            code, error = generate_code_from_df(st.session_state.df, column_descriptions)
+            if error:
+                return None, None, error
+            
+            # 执行代码生成图片
+            success, image_path = execute_code(code)
+            if success:
+                return code, image_path, "图表生成成功"
+            return None, None, "图表生成失败"
+        else:
+            return None, None, "无法生成图表：未找到数据"
+    
+    # 检查文件是否存在
+    if not os.path.exists(file_path):
         return None, None, "无法生成图表：未找到数据文件"
     
     # 生成代码
@@ -156,6 +234,90 @@ def create_chart(file_path=None, column_descriptions=None):
     if success:
         return code, image_path, "图表生成成功"
     return None, None, "图表生成失败"
+
+def generate_code_from_df(df, column_descriptions):
+    """从DataFrame生成可视化代码的函数
+    
+    Args:
+        df (pandas.DataFrame): 数据框
+        column_descriptions (dict): 数据列的描述信息，格式为 {列名: 描述}
+        
+    Returns:
+        tuple: (生成的代码, 错误信息)
+            - 如果成功生成代码，返回 (代码字符串, None)
+            - 如果失败，返回 (None, 错误信息字符串)
+    """
+    # 创建代码生成agent
+    code_generator = ConversableAgent(
+        "code_generator",
+        system_message="你是一个专业的数据可视化专家。请根据提供的数据描述和样本，对数据进行分析，并思考一种良好的可视化图表分析方法，生成合适的Python代码来创建数据可视化。使用matplotlib库。代码需要将生成的图表保存为'answer.png'。代码必须使用SQL查询来获取数据，而不是使用st.session_state.df。",
+        llm_config={"config_list": config_list},
+        human_input_mode="NEVER"
+    )
+    
+    # 准备数据信息
+    columns_info = ""
+    for col, desc in column_descriptions.items():
+        col_type = df[col].dtype
+        columns_info += f"- {col} ({col_type}): {desc}\n"
+    
+    # 获取表名
+    table_name = st.session_state.mysql_selected_table
+    
+    data_info = """
+数据来源: MySQL表 ({table_name})
+
+数据列描述:
+{columns_info}
+
+数据示例:
+{data_sample}
+
+请生成合适的Python代码来可视化这些数据。代码必须：
+1. 导入必要的库（pandas, matplotlib, mysql.connector）
+2. 使用SQL查询从数据库中获取所需的数据
+3. 创建合适的可视化
+4. 将图表保存为'answer.png'
+
+SQL查询示例：
+```python
+import mysql.connector
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# 连接数据库
+conn = mysql.connector.connect(
+    host="localhost",
+    user="root",
+    password="password",
+    database="database_name"
+)
+
+# 执行SQL查询
+query = "SELECT column1, column2 FROM table_name LIMIT 1000"
+df = pd.read_sql(query, conn)
+
+# 创建可视化
+plt.figure(figsize=(10, 6))
+plt.plot(df['column1'], df['column2'])
+plt.title('标题')
+plt.xlabel('X轴标签')
+plt.ylabel('Y轴标签')
+
+# 保存图片
+plt.savefig('answer.png')
+
+# 关闭连接
+conn.close()
+```
+
+请仅生成代码！不要生成其他内容！也不要生成```python```这样的符号！
+""".format(table_name=table_name, columns_info=columns_info, data_sample=df.head().to_string())
+    
+    # 生成代码
+    code_response = code_generator.generate_reply(messages=[{"role": "user", "content": data_info}])
+    
+    return code_response, None
 
 def regenerate_chart(code):
     """根据现有代码重新生成图表的函数
@@ -175,10 +337,16 @@ def regenerate_chart(code):
     if not code:
         return False, None, "无法生成图表：未提供代码"
     
-    success, image_path = execute_code(code)
-    if success:
-        return True, image_path, "图表生成成功"
-    return False, None, "图表生成失败"
+    try:
+        # 直接执行代码
+        success, image_path = execute_code(code)
+        
+        if success:
+            return True, image_path, "图表生成成功"
+        return False, None, "图表生成失败"
+    except Exception as e:
+        print(f"重新生成图表时出错：{str(e)}")
+        return False, None, f"图表生成失败：{str(e)}"
 
 def process_data(df):
     """数据处理函数
