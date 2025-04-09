@@ -476,6 +476,7 @@ if st.session_state.file_uploaded and st.session_state.descriptions_provided:
         with st.spinner("正在重新生成图表..."):
             # 使用当前可视化代码重新生成图表
             success, image_path, result = regenerate_chart(st.session_state.visualization_code)
+            print(success)
             
             if success:
                 st.session_state.current_image = image_path

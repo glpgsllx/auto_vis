@@ -1,6 +1,9 @@
 import streamlit as st
-from utils.auth import update_settings
+from utils.auth import update_settings, update_avatar
 from datetime import datetime
+import base64
+import os
+import uuid
 
 st.title("个人中心")
 
@@ -11,10 +14,61 @@ if 'user_info' not in st.session_state or st.session_state.user_info is None:
 
 user_info = st.session_state.user_info
 
+# 创建头像存储目录
+if not os.path.exists("data/avatars"):
+    os.makedirs("data/avatars")
+
 # 个人信息展示
 col1, col2 = st.columns([1, 2])
 with col1:
-    st.image("https://placeholder.com/150", caption="头像")
+    # 显示当前头像
+    avatar_url = user_info.get('avatar_url', 'https://ui-avatars.com/api/?name=' + user_info.get('username', 'User') + '&background=random')
+    
+    # 检查头像路径是否存在
+    if avatar_url.startswith('data/avatars/'):
+        if os.path.exists(avatar_url):
+            st.image(avatar_url, caption="当前头像", width=150)
+        else:
+            # 如果头像文件不存在，使用默认头像
+            default_avatar = 'https://ui-avatars.com/api/?name=' + user_info.get('username', 'User') + '&background=random'
+            st.image(default_avatar, caption="当前头像", width=150)
+    else:
+        st.image(avatar_url, caption="当前头像", width=150)
+    
+    # 头像上传
+    st.write("更新头像")
+    uploaded_file = st.file_uploader("选择图片", type=["jpg", "jpeg", "png"], key="avatar_uploader")
+    
+    # 使用按钮触发上传，而不是自动触发
+    if uploaded_file is not None and st.button("确认上传"):
+        # 删除用户之前的头像文件（如果有）
+        old_avatar_url = user_info.get('avatar_url', '')
+        if old_avatar_url.startswith('data/avatars/') and os.path.exists(old_avatar_url):
+            try:
+                os.remove(old_avatar_url)
+            except Exception as e:
+                st.warning(f"无法删除旧头像文件: {e}")
+        
+        # 使用用户名作为文件名基础，避免生成过多文件
+        file_extension = os.path.splitext(uploaded_file.name)[1]
+        file_name = f"{user_info['username']}_{int(datetime.now().timestamp())}{file_extension}"
+        file_path = f"data/avatars/{file_name}"
+        
+        # 保存文件
+        with open(file_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        
+        # 更新用户头像
+        success, message = update_avatar(user_info['username'], file_path)
+        if success:
+            st.success("头像已更新")
+            # 使用session_state清除上传的文件
+            st.session_state.avatar_uploader = None
+            # 刷新页面以显示新头像
+            st.rerun()
+        else:
+            st.error(f"头像更新失败: {message}")
+
 with col2:
     st.write(f"用户名：{user_info.get('username', '未设置')}")
     st.write(f"账号等级：{user_info.get('level', '普通用户')}")

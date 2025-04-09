@@ -1,4 +1,5 @@
 import streamlit as st
+import os
 from utils.db import init_db
 
 # 初始化数据库
@@ -54,46 +55,40 @@ st.markdown("""
         transform: translateY(-5px);
         box-shadow: 0 8px 15px rgba(0, 0, 0, 0.1);
     }
-    .sidebar-content {
-        padding: 1rem;
-    }
-    .user-welcome {
-        text-align: center;
-        padding: 1rem;
-        background: linear-gradient(90deg, #FF6B6B 0%, #FF8E53 100%);
-        color: white;
-        border-radius: 10px;
-        margin-bottom: 1rem;
-    }
-    .stats-container {
-        background: white;
-        padding: 1rem;
-        border-radius: 10px;
-        margin-top: 1rem;
-    }
     </style>
     """, unsafe_allow_html=True)
 
 # 3. 侧边栏配置
 with st.sidebar:
-    st.markdown('<div class="sidebar-content">', unsafe_allow_html=True)
-    st.image("https://placeholder.com/150", caption="Logo")
-    st.markdown("---")
-    
-    st.markdown(f'''
-    <div class="user-welcome">
-        <h3>欢迎回来</h3>
-        <p>{st.session_state.user_info['username']}</p>
-    </div>
-    ''', unsafe_allow_html=True)
-    st.markdown('<div class="stats-container">', unsafe_allow_html=True)
-    st.write(f"使用次数：{st.session_state.user_info['usage_count']}")
-    st.write(f"账号等级：{st.session_state.user_info['level']}")
-    st.markdown('</div>', unsafe_allow_html=True)
-    if st.button("退出登录", key="logout"):
-        st.session_state.user_info = None
-        st.switch_page("pages/1_登录.py")
-    st.markdown('</div>', unsafe_allow_html=True)
+    # 显示用户信息
+    if 'user_info' in st.session_state and st.session_state.user_info is not None:
+        # 显示用户头像
+        avatar_url = st.session_state.user_info.get('avatar_url', 'https://ui-avatars.com/api/?name=' + st.session_state.user_info.get('username', 'User') + '&background=random')
+        
+        # 检查头像路径是否存在
+        if avatar_url.startswith('data/avatars/'):
+            if os.path.exists(avatar_url):
+                st.image(avatar_url, width=100)
+            else:
+                # 如果头像文件不存在，使用默认头像
+                default_avatar = 'https://ui-avatars.com/api/?name=' + st.session_state.user_info.get('username', 'User') + '&background=random'
+                st.image(default_avatar, width=100)
+        else:
+            st.image(avatar_url, width=100)
+        
+        # 显示用户名
+        st.write(f"**{st.session_state.user_info['username']}**")
+        
+        # 简单显示统计信息，无额外容器
+        st.write(f"使用次数：{st.session_state.user_info['usage_count']}")
+        st.write(f"账号等级：{st.session_state.user_info['level']}")
+        
+        st.markdown("---")
+        
+        # 退出登录按钮
+        if st.button("退出登录", key="logout"):
+            st.session_state.user_info = None
+            st.switch_page("pages/1_登录.py")
 
 # 4. 主页面内容
 st.markdown(f'''

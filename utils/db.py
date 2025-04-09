@@ -37,6 +37,7 @@ def create_user(username, password_hash, email):
             'email': email,
             'level': '普通用户',
             'usage_count': 0,
+            'avatar_url': 'https://ui-avatars.com/api/?name=' + username + '&background=random',  # 默认头像
             'settings': {
                 'notifications': True,
                 'dark_mode': False,
@@ -86,6 +87,27 @@ def increment_usage_count(username):
         {'username': username},
         {'$inc': {'usage_count': 1}}
     )
+
+def update_user_avatar(username, avatar_url):
+    """更新用户头像
+    
+    Args:
+        username (str): 用户名
+        avatar_url (str): 头像URL
+        
+    Returns:
+        tuple: (是否成功, 消息)
+            - 如果成功，返回 (True, '头像已更新')
+            - 如果失败，返回 (False, 错误信息)
+    """
+    try:
+        result = users.update_one(
+            {'username': username},
+            {'$set': {'avatar_url': avatar_url}}
+        )
+        return True, '头像已更新'
+    except Exception as e:
+        return False, str(e)
 
 # MySQL连接和查询功能
 def connect_mysql(host, port, user, password, database, charset='utf8mb4'):
