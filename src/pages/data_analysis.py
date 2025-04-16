@@ -568,7 +568,66 @@ if st.session_state.file_uploaded and st.session_state.descriptions_provided:
                     
                     # 显示图片（如果有）
                     if "image" in message:
-                        st.image(message["image"])
+                        # 读取SVG文件内容
+                        with open(message["image"], 'r', encoding='utf-8') as f:
+                            svg_content = f.read()
+                        
+                        # 准备用于放大缩小的SVG内容
+                        if "svg_scale" not in st.session_state:
+                            st.session_state.svg_scale = {}
+                        
+                        # 为当前图表初始化缩放比例（如果不存在）
+                        if message["image"] not in st.session_state.svg_scale:
+                            st.session_state.svg_scale[message["image"]] = 1.0
+                        
+                        # 修改SVG内容，添加缩放比例
+                        if '<svg ' in svg_content:
+                            # 从SVG内容中提取宽度和高度
+                            import re
+                            width_match = re.search(r'width="([^"]*)"', svg_content)
+                            height_match = re.search(r'height="([^"]*)"', svg_content)
+                            
+                            original_width = width_match.group(1) if width_match else "600"
+                            original_height = height_match.group(1) if height_match else "400"
+                            
+                            # 移除单位，只保留数值部分
+                            original_width = re.sub(r'[^0-9.]', '', original_width)
+                            original_height = re.sub(r'[^0-9.]', '', original_height)
+                            
+                            # 计算缩放后的尺寸
+                            scaled_width = float(original_width) * st.session_state.svg_scale[message["image"]]
+                            scaled_height = float(original_height) * st.session_state.svg_scale[message["image"]]
+                            
+                            # 替换SVG中的宽度和高度
+                            svg_content = re.sub(r'width="[^"]*"', f'width="{scaled_width}px"', svg_content)
+                            svg_content = re.sub(r'height="[^"]*"', f'height="{scaled_height}px"', svg_content)
+                        
+                        # 直接显示SVG图表
+                        st.markdown(svg_content, unsafe_allow_html=True)
+                        
+                        # 添加图表操作按钮
+                        cols = st.columns(3)
+                        with cols[0]:
+                            if st.button("放大", key=f"zoom_in_{message['image']}"):
+                                # 放大SVG图表（增加缩放比例）
+                                st.session_state.svg_scale[message["image"]] *= 1.2
+                                st.rerun()
+                        with cols[1]:
+                            if st.button("缩小", key=f"zoom_out_{message['image']}"):
+                                # 缩小SVG图表（减小缩放比例）
+                                st.session_state.svg_scale[message["image"]] *= 0.8
+                                st.rerun()
+                        with cols[2]:
+                            # 提供下载链接
+                            download_path = message["image"]
+                            with open(download_path, "rb") as file:
+                                btn = st.download_button(
+                                    label="下载图表",
+                                    data=file,
+                                    file_name="chart.svg",
+                                    mime="image/svg+xml",
+                                    key=f"download_{message['image']}"
+                                )
             
             # 如果AI正在思考，显示思考状态
             if st.session_state.is_thinking:

@@ -44,7 +44,7 @@ def generate_code(file_path, column_descriptions):
     # 创建代码生成agent
     code_generator = ConversableAgent(
         "code_generator",
-        system_message="你是一个专业的数据可视化专家。请根据提供的数据描述和样本，对数据进行分析，并思考一种良好的可视化图表分析方法，生成合适的Python代码来创建数据可视化。使用matplotlib库。代码需要将生成的图表保存为'answer.png'。",
+        system_message="你是一个专业的数据可视化专家。请根据提供的数据描述和样本，对数据进行分析，并思考一种良好的可视化图表分析方法，生成合适的Python代码来创建数据可视化。必须使用matplotlib库，不要使用seaborn或其他可视化库。代码需要将生成的图表保存为'answer.svg'。",
         llm_config={"config_list": config_list},
         human_input_mode="NEVER"
     )
@@ -74,8 +74,8 @@ def generate_code(file_path, column_descriptions):
     请生成合适的Python代码来可视化这些数据。代码必须：
     1. 导入必要的库（pandas, matplotlib）
     2. 读取数据文件（使用正确的函数读取{}文件）
-    3. 创建合适的可视化
-    4. 将图表保存为'answer.png'
+    3. 创建合适的可视化（必须使用matplotlib，不要使用seaborn）
+    4. 将图表保存为'answer.svg'
 
     读取文件的代码应该是:
     {}
@@ -111,7 +111,7 @@ def generate_code_from_df(df, column_descriptions):
         # 创建代码生成agent
         code_generator = ConversableAgent(
             "code_generator",
-            system_message="你是一个专业的数据可视化专家。请根据提供的数据描述和样本，对数据进行分析，并思考一种良好的可视化图表分析方法，生成合适的Python代码来创建数据可视化。使用matplotlib库。代码需要将生成的图表保存为'answer.png'。",
+            system_message="你是一个专业的数据可视化专家。请根据提供的数据描述和样本，对数据进行分析，并思考一种良好的可视化图表分析方法，生成合适的Python代码来创建数据可视化。必须使用matplotlib库，不要使用seaborn或其他可视化库。代码需要将生成的图表保存为'answer.svg'。",
             llm_config={"config_list": config_list},
             human_input_mode="NEVER"
         )
@@ -147,8 +147,8 @@ def generate_code_from_df(df, column_descriptions):
             请生成合适的Python代码来可视化这些数据。代码必须：
             1. 导入必要的库（pandas, matplotlib, pymysql）
             2. 连接MySQL数据库获取数据
-            3. 创建合适的可视化
-            4. 将图表保存为'answer.png'
+            3. 创建合适的可视化（必须使用matplotlib，不要使用seaborn）
+            4. 将图表保存为'answer.svg'
 
             数据库连接和查询的代码应该是:
             ```python
@@ -200,8 +200,8 @@ def generate_code_from_df(df, column_descriptions):
             请生成合适的Python代码来可视化这些数据。代码必须：
             1. 导入必要的库（pandas, matplotlib）
             2. 读取数据文件（使用pd.read_csv读取文件）
-            3. 创建合适的可视化
-            4. 将图表保存为'answer.png'
+            3. 创建合适的可视化（必须使用matplotlib，不要使用seaborn）
+            4. 将图表保存为'answer.svg'
 
             读取文件的代码应该是:
             df = pd.read_csv('{}')

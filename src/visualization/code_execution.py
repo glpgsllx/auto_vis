@@ -37,26 +37,21 @@ def execute_code(code, image_id=None):
             image_id = str(uuid.uuid4().hex)
         
         # 修改代码中的图片保存路径
-        modified_code = code.replace("'answer.png'", f"'chart_{image_id}.png'")
+        modified_code = code.replace("'answer.png'", f"'chart_{image_id}.svg'").replace("'answer.svg'", f"'chart_{image_id}.svg'")
         
         # 添加中文字体支持
         font_support_code = """
 # 添加中文字体支持
 import matplotlib.pyplot as plt
 import matplotlib
-import platform
 
-# 根据操作系统设置合适的中文字体
-system = platform.system()
-if system == 'Windows':
-    matplotlib.rcParams['font.family'] = ['Microsoft YaHei', 'SimHei', 'sans-serif']
-elif system == 'Darwin':  # macOS
-    matplotlib.rcParams['font.family'] = ['PingFang SC', 'STHeiti', 'Heiti TC', 'sans-serif']
-else:  # Linux
-    matplotlib.rcParams['font.family'] = ['WenQuanYi Micro Hei', 'Source Han Sans CN', 'sans-serif']
+# 设置matplotlib后端为Agg，避免字体问题
+matplotlib.use('Agg')
 
-# 解决负号显示问题
-matplotlib.rcParams['axes.unicode_minus'] = False
+# 直接设置中文字体
+plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'WenQuanYi Micro Hei', 'WenQuanYi Zen Hei', 'Noto Sans CJK JP']
+plt.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
+plt.rcParams['svg.fonttype'] = 'none'  # 确保字体被正确嵌入到SVG中
 """
         
         # 在import语句后插入字体设置代码
@@ -199,7 +194,7 @@ matplotlib.rcParams['axes.unicode_minus'] = False
         reply = code_executor.generate_reply(messages=[{"role": "user", "content": message_with_code}])
         
         # 等待图片生成
-        image_path = f'codeexe/chart_{image_id}.png'
+        image_path = f'codeexe/chart_{image_id}.svg'
         for _ in range(10):
             if os.path.exists(image_path):
                 return True, image_path
