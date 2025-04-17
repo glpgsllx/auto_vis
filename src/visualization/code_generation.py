@@ -86,9 +86,7 @@ def generate_code(file_path, column_descriptions):
     return code_response, None
 
 def generate_code_from_df(df, column_descriptions, persistent_file_path: str | None):
-    """从DataFrame生成可视化代码，使用传入的持久文件路径"""
-    if not persistent_file_path:
-         return None, "错误：需要提供 persistent_file_path 来生成代码。"
+    """从DataFrame生成可视化代码，根据数据源类型生成不同提示"""
     try:
         code_generator = ConversableAgent(
             "code_generator",
@@ -101,29 +99,131 @@ def generate_code_from_df(df, column_descriptions, persistent_file_path: str | N
         for col, desc in column_descriptions.items():
             if col in df.columns:
                 col_type = df[col].dtype
-                columns_info += f"- {col} ({col_type}): {desc}\n"
+                columns_info += f"- {col} ({col_type}): {repr(desc)}\\n"
 
-        # --- 修改： 使用占位符 (需要知道文件类型) --- 
-        file_read_code = "# 无法确定文件类型，请手动添加读取代码" # Default if path is None
-        placeholder = None
-        file_type_for_prompt = "未知文件"
-        if persistent_file_path:
+        # --- 根据 persistent_file_path 判断数据源类型并生成不同的提示 ---
+        if persistent_file_path is None: # MySQL Case
+            # --- 获取表名和数据库名 ---
+            table_name = st.session_state.get('mysql_selected_table', 'your_table_name')
+            conn_info_safe = st.session_state.get('mysql_connection_info', {})
+            database_name = conn_info_safe.get('database', 'your_database_name')
+            file_type_for_prompt = f"MySQL 表 ({table_name})"
+
+            # --- 构建 MySQL 的 Prompt (修正 f-string 和内部代码) ---
+            sample_data_string = df.head().to_string()
+            # 确保 table_name 和 database_name 对 SQL 和 Python 字符串安全
+            safe_table_name = table_name.replace('`', '``') # 转义 SQL 中的反引号
+            safe_database_name = database_name.replace('"', '\"') # 转义 Python 字符串中的双引号
+            
+            data_info = f"""
+数据来源: {file_type_for_prompt}
+
+数据列描述:
+{columns_info}
+
+数据示例 (来自数据库的前几行):
+{sample_data_string}
+
+请生成合适的Python代码来可视化这些数据。代码必须：
+1.  导入必要的库（pandas, matplotlib, mysql.connector 或 pymysql）
+2.  使用 **占位符凭据** 连接到 MySQL 数据库。(Host: 'localhost', User: 'root', Password: 'password', Database: '{safe_database_name}')
+3.  执行 SQL 查询从 `{safe_table_name}` 表获取数据 (例如 SELECT * FROM `{safe_table_name}` LIMIT 1000)。将结果读入名为 'df' 的 Pandas DataFrame。
+4.  使用 matplotlib 基于 'df' 创建合适的可视化。
+5.  将图表保存为 'answer.svg'。
+6.  关闭数据库连接。
+
+SQL 查询和绘图的 Python 代码示例结构：
+```python
+import mysql.connector # 或者 import pymysql
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib # 引入 matplotlib
+
+# 设置 Agg 后端 (如果需要避免 GUI 问题)
+matplotlib.use('Agg')
+
+# 添加中文字体支持 (如果需要)
+plt.rcParams['font.sans-serif'] = ['SimHei'] # 例如 SimHei
+plt.rcParams['axes.unicode_minus'] = False
+plt.rcParams['svg.fonttype'] = 'none'
+
+# 1. 连接数据库 (使用占位符)
+try:
+    conn = mysql.connector.connect(
+        host="localhost",
+        user="root",
+        password="password",
+        database="{safe_database_name}", # 使用转义后的数据库名
+        # charset='utf8mb4' # 根据需要添加
+    )
+
+    # 2. 执行 SQL 查询
+    # 使用 f-string 构建 SQL 查询，并用反引号包裹表名
+    query = f"SELECT * FROM `{safe_table_name}` LIMIT 1000"
+    print(f"Executing query: {{query}}") # 打印查询语句
+    df = pd.read_sql(query, conn)
+    print(f"Data loaded into DataFrame, shape: {{df.shape}}") # 打印数据形状
+
+    # 3. 创建可视化 (示例：绘制前两列)
+    if not df.empty and len(df.columns) >= 2:
+        plt.figure(figsize=(10, 6))
+        # --- 这里替换成基于数据分析的实际绘图逻辑 ---
+        col1 = df.columns[0]
+        col2 = df.columns[1]
+        plt.plot(df[col1], df[col2]) 
+        plt.title('数据可视化标题') # 使用简单标题
+        plt.xlabel(str(col1)) # 转换为字符串以防万一
+        plt.ylabel(str(col2))
+        # --- 绘图逻辑结束 ---
+        plt.tight_layout() # 调整布局
+
+        # 4. 保存图片
+        save_path = 'answer.svg'
+        plt.savefig(save_path)
+        print(f"Chart saved to {{save_path}}")
+        plt.close() # 关闭图形，释放内存
+    else:
+        print("DataFrame 为空或列数不足，无法生成图表。")
+
+except Exception as e:
+    # 使用 repr(e) 获取更详细的错误表示
+    print(f"An error occurred: {{repr(e)}}") 
+
+finally:
+    # 5. 关闭连接
+    # 检查 conn 是否定义并且是连接对象并且已连接
+    if 'conn' in locals() and hasattr(conn, 'is_connected') and conn.is_connected():
+        conn.close()
+        print("Database connection closed.")
+
+```
+
+请仅生成完整的 Python 代码块！不要包含 markdown 的 ```python ``` 标记。
+"""
+
+        else: # File Case (CSV/Excel)
+            # --- 文件类型的 Prompt (保持不变) ---
+            file_read_code = "# 无法确定文件类型，请手动添加读取代码" # Default
+            placeholder = None
+            file_type_for_prompt = "未知文件"
             file_extension = os.path.splitext(persistent_file_path)[1].lower()
             if file_extension == '.csv':
                  placeholder = 'data.csv'
                  file_read_code = f"df = pd.read_csv('{placeholder}')"
-                 file_type_for_prompt = "CSV"
+                 file_type_for_prompt = "CSV 文件"
             elif file_extension in ['.xlsx', '.xls']:
                  placeholder = 'data.xlsx'
                  file_read_code = f"df = pd.read_excel('{placeholder}')"
-                 file_type_for_prompt = "Excel"
-
-        data_info = """
-数据类型: {file_type}
+                 file_type_for_prompt = "Excel 文件"
+            
+            # 使用 f-string 并确保 df.head() 结果正确转义
+            sample_data_string_file = df.head().to_string()
+            data_info = f"""
+数据来源: {file_type_for_prompt}
 列描述:
 {columns_info}
-数据示例:
-{sample_data}
+数据示例 (DataFrame 的前几行):
+{sample_data_string_file}
 
 请生成合适的Python代码来可视化这些数据。代码必须：
 1. 导入必要的库（pandas, matplotlib）
@@ -135,17 +235,21 @@ def generate_code_from_df(df, column_descriptions, persistent_file_path: str | N
 {file_read_code}
 
 请仅生成代码！不要生成其他内容！也不要生成```python```这样的符号！
-""".format(
-            file_type=file_type_for_prompt,
-            columns_info=columns_info,
-            sample_data=df.head().to_string(),
-            file_read_code=file_read_code
-        )
+"""
         
+        # --- 打印 Prompt 用于调试 (保持不变) ---
+        print("[generate_code_from_df] Generated Prompt for LLM:")
+        print("-" * 30)
+        print(data_info)
+        print("-" * 30)
+
+        # --- 调用 LLM 生成代码 (保持不变) ---
         code_response = code_generator.generate_reply(messages=[{"role": "user", "content": data_info}])
         return code_response, None
     except Exception as e:
-        return None, f"生成可视化代码时出错：{str(e)}"
+        import traceback # 确保导入 traceback
+        print(f"生成可视化代码时出错: {e}\\n{traceback.format_exc()}") # 打印堆栈跟踪
+        return None, f"生成可视化代码时出错：{str(e)}" 
 
 def create_chart(user_id: str, session_id: str, column_descriptions, data_source_type: str, df=None, persistent_file_path=None):
     """创建图表的函数

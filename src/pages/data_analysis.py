@@ -441,8 +441,8 @@ if has_data_context and not df_loaded:
                                 raise Exception("从数据库获取的数据为空。")
                                 
                             st.session_state.df = df
-                            # 恢复 session_state 中与MySQL相关的标记
-                            st.session_state.mysql_connection_info = conn_info # Store info without password again
+                            # --- 修改：确保保存包含密码的完整连接信息 --- 
+                            st.session_state.mysql_connection_info = full_conn_info # 使用包含密码的版本
                             st.session_state.mysql_selected_table = table_name
                             st.session_state.mysql_data_fetched = True
                             st.session_state.mysql_step = "data_loaded"
@@ -535,89 +535,181 @@ elif not st.session_state.get('file_uploaded'): # Use .get() for safety
                 password = st.text_input("密码", type="password", key="mysql_pass")
             with col2:
                 database = st.text_input("数据库名", key="mysql_db")
-            if st.button("连接数据库", key="mysql_connect_btn"):
+                # 可以添加 charset 输入，如果需要
+                charset = st.text_input("字符集 (可选)", value="utf8mb4", key="mysql_charset")
+
+            if st.button("连接并获取表列表", key="mysql_connect_btn"):
                 conn_info = {"host": host, "port": port, "user": user, "password": password, "database": database}
-                connection, error = connect_mysql(**conn_info)
-                if error:
-                    st.error(f"连接失败: {error}")
-                else:
-                    st.session_state.mysql_connection = connection # Store connection object (temporary)
-                    tables = get_mysql_tables(connection)
-                    if not tables:
-                        st.warning("数据库中没有找到表")
+                if charset: # 添加 charset 到连接信息
+                    conn_info["charset"] = charset
+                
+                connection = None # Initialize connection variable
+                try:
+                    with st.spinner("正在连接数据库并获取表列表..."):
+                        connection, error = connect_mysql(**conn_info)
+                        if error:
+                            st.error(f"连接失败: {error}")
+                        else:
+                            tables = get_mysql_tables(connection)
+                            if not tables:
+                                st.warning("数据库中没有找到表。")
+                            else:
+                                st.session_state.mysql_tables = tables
+                                # --- 修改：只保存不含密码的连接信息 ---
+                                safe_conn_info = {k: v for k, v in conn_info.items() if k != 'password'}
+                                st.session_state.mysql_connection_info = safe_conn_info 
+                                st.session_state.mysql_step = "select_table"
+                                st.success("数据库连接成功！请选择要分析的表。")
+                                # --- 修改：不再存储连接对象，获取完表就关闭 ---
+                                # del st.session_state['mysql_connection'] # 移除旧代码
+                                st.rerun() # 跳转到下一步
+                except Exception as e:
+                     st.error(f"连接或获取表列表时发生意外错误: {e}")
+                finally:
+                    # --- 新增：无论如何都尝试关闭连接 ---
+                    if connection:
                         close_mysql_connection(connection)
-                    else:
-                        st.session_state.mysql_tables = tables
-                        st.session_state.mysql_connection_info = {k: v for k, v in conn_info.items() if k != 'password'} # Store safe info
-                        st.session_state.mysql_step = "select_table"
-                        st.success("数据库连接成功！请选择要分析的表。")
-                        st.rerun()
 
         elif st.session_state.mysql_step == "select_table":
             st.subheader("步骤2: 选择要分析的表")
-            st.info(f"已连接到 {st.session_state.mysql_connection_info['database']} 数据库")
-            selected_table = st.selectbox("请选择要分析的表", st.session_state.mysql_tables, key="mysql_table_select")
-            st.session_state.mysql_selected_table = selected_table
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("获取表数据", key="mysql_fetch_btn"):
-                    st.session_state.mysql_step = "fetch_data"
-                    st.rerun()
-            with col2:
-                if st.button("断开连接", key="mysql_disconnect_btn"):
-                    if st.session_state.get('mysql_connection'): close_mysql_connection(st.session_state.mysql_connection)
-                    # Clear relevant state
-                    keys_to_clear = ['mysql_connection', 'mysql_tables', 'mysql_selected_table', 'mysql_connection_info', 'mysql_step']
-                    for key in keys_to_clear: 
-                        if key in st.session_state: del st.session_state[key]
-                    st.rerun()
-         
+            if 'mysql_connection_info' in st.session_state: # 检查是否有连接信息
+                st.info(f"已连接到 {st.session_state.mysql_connection_info.get('database','?')} 数据库 (Host: {st.session_state.mysql_connection_info.get('host','?')})")
+                selected_table = st.selectbox(
+                    "请选择要分析的表", 
+                    st.session_state.get('mysql_tables', []), # 使用 .get 防错
+                    key="mysql_table_select"
+                )
+                # 及时更新选择的表名到session_state
+                if selected_table: 
+                    st.session_state.mysql_selected_table = selected_table
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    # --- 修改：按钮触发 fetch_data 状态 ---
+                    if st.button("下一步：获取表数据", key="mysql_goto_fetch_btn"): 
+                        if selected_table:
+                            st.session_state.mysql_step = "fetch_data"
+                            st.rerun()
+                        else:
+                            st.warning("请先选择一个表。")
+                with col2:
+                    # --- 修改：返回连接步骤 ---
+                    if st.button("重新连接", key="mysql_reconnect_btn"): 
+                        # 清理与MySQL选择和获取相关的状态
+                        keys_to_clear = ['mysql_tables', 'mysql_selected_table', 'mysql_connection_info', 'mysql_step', 'mysql_data_fetched', 'df']
+                        for key in keys_to_clear:
+                            if key in st.session_state: del st.session_state[key]
+                        st.session_state.mysql_step = "connect" # 设置回连接步骤
+                        st.rerun()
+            else:
+                st.warning("缺少数据库连接信息，请返回上一步重新连接。")
+                if st.button("返回连接步骤"):
+                     st.session_state.mysql_step = "connect"
+                     st.rerun()
+        
         elif st.session_state.mysql_step == "fetch_data":
             st.subheader("步骤3: 获取表数据")
-            st.info(f"正在从 {st.session_state.mysql_connection_info['database']} 的 {st.session_state.mysql_selected_table} 表获取数据")
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            try:
-                # Re-establish connection using stored info (need password from user implicitly?)
-                # This part is tricky without password - assuming connection is still valid or prompting
-                if not st.session_state.get('mysql_connection') or not st.session_state.mysql_connection.is_connected():
-                    # Reconnect logic might fail here without password.
-                    # Let's assume connection is valid for now, or prompt user
-                    st.error("数据库连接已断开，请重新连接。") 
-                    st.session_state.mysql_step = "connect"
-                    st.rerun()
-                    st.stop()
-                      
-                status_text.text("正在获取表数据..."); progress_bar.progress(50)
-                df, error = get_mysql_table_data(st.session_state.mysql_connection, st.session_state.mysql_selected_table, limit=1000)
-                 
-                if error:
-                    raise Exception(f"获取数据失败: {error}")
-                if df is None or df.empty:
-                    raise Exception("获取到的数据为空。")
-                     
-                st.session_state.df = df
-                st.session_state.file_uploaded = True
-                st.session_state.file_type = "mysql"
-                st.session_state.column_descriptions = {col: "" for col in st.session_state.df.columns}
-                st.session_state.mysql_data_fetched = True
-                st.session_state.mysql_step = "data_loaded"
-                status_text.text("数据获取成功！"); progress_bar.progress(100)
+            # --- 重写 fetch_data 逻辑 ---
+            if 'mysql_connection_info' not in st.session_state or 'mysql_selected_table' not in st.session_state:
+                st.error("缺少数据库连接信息或未选择表。请返回重新操作。")
+                st.session_state.mysql_step = "connect" # 或者 select_table? connect 更安全
                 st.rerun()
-            except Exception as e:
-                st.error(f"获取 MySQL 数据时出错: {e}")
-                progress_bar.progress(100); status_text.text("失败")
-                # Go back to selection? 
-                st.session_state.mysql_step = "select_table"
-                # Don't rerun immediately, let user see error
+                st.stop()
+
+            conn_info_safe = st.session_state.mysql_connection_info
+            selected_table = st.session_state.mysql_selected_table
+            
+            st.info(f"准备从 {conn_info_safe.get('database','?')} 的 {selected_table} 表获取数据")
+            st.warning("需要再次输入数据库密码以确认操作。")
+            
+            with st.form("mysql_fetch_form"):
+                password = st.text_input("请输入数据库密码", type="password", key="mysql_fetch_password")
+                limit_rows = st.number_input("限制加载行数 (0表示不限制)", min_value=0, value=1000, key="mysql_limit_rows")
+                submitted = st.form_submit_button("获取数据")
+
+                if submitted:
+                    if not password:
+                        st.error("请输入密码。")
+                    else:
+                        # 构建完整的连接信息 (包括密码)
+                        full_conn_info = {**conn_info_safe, "password": password}
+                        connection = None # Initialize connection
+                        try:
+                            with st.spinner(f"正在连接并加载表 {selected_table}..."):
+                                connection, conn_error = connect_mysql(**full_conn_info)
+                                if conn_error:
+                                    raise Exception(f"连接失败: {conn_error}")
+                                
+                                limit = limit_rows if limit_rows > 0 else None
+                                df, data_error = get_mysql_table_data(connection, selected_table, limit=limit) 
+                                
+                                if data_error:
+                                    raise Exception(f"获取数据失败: {data_error}")
+                                
+                                if df is None or df.empty:
+                                    st.warning("从数据库获取的数据为空。")
+                                    # 即使为空也认为是成功获取了，可以继续分析空数据框？或者报错？
+                                    # 这里选择继续，但标记 df 为空
+                                    st.session_state.df = pd.DataFrame() # 创建空 DF
+                                else:
+                                    st.session_state.df = df
+
+                                # --- 成功获取数据后的状态更新 ---
+                                st.session_state.file_uploaded = True # 标记数据已"上传" (概念上)
+                                st.session_state.file_type = "mysql" 
+                                # 初始化列描述 (即使是空df)
+                                st.session_state.column_descriptions = {col: "" for col in st.session_state.df.columns}
+                                # --- 修改：保存包含密码的完整连接信息 --- 
+                                st.session_state.mysql_connection_info = full_conn_info 
+                                st.session_state.mysql_data_fetched = True
+                                st.session_state.mysql_step = "data_loaded" # 进入显示和描述阶段
+                                
+                                # 记录 file_upload 类型的消息到历史记录
+                                # --- 修改：保存到消息记录时，仍然用不含密码的版本 --- 
+                                conn_info_for_log = {k: v for k, v in full_conn_info.items() if k != 'password'}
+                                mysql_info_content = {
+                                    "connection_info": conn_info_for_log,
+                                    "table_name": selected_table,
+                                    "rows_loaded": len(st.session_state.df)
+                                }
+                                add_message_to_session(
+                                    session_id=current_session_id,
+                                    username=st.session_state.user_info['username'],
+                                    role="user", # 认为是用户操作触发
+                                    content_type="mysql_connection", # 使用特定类型
+                                    content=mysql_info_content
+                                )
+                                
+                                st.success("数据获取成功！")
+                                time.sleep(0.5) # 短暂延迟
+                                st.rerun() # Rerun 进入下一步 (描述或聊天)
+                        
+                        except Exception as e:
+                            st.error(f"获取 MySQL 数据时出错: {e}")
+                            # --- 修改：错误时不改变步骤，让用户看到错误 ---
+                            # del st.session_state.mysql_step # 不改变步骤
+                            if 'df' in st.session_state: del st.session_state.df # 清理可能的部分数据
+                        finally:
+                            # --- 新增：确保关闭连接 ---
+                            if connection:
+                                close_mysql_connection(connection)
 
         elif st.session_state.mysql_step == "data_loaded":
+            # --- data_loaded 逻辑基本不变，用于显示成功信息和 df.head() ---
             st.subheader("MySQL 数据已加载")
             st.success(f"已从表 '{st.session_state.mysql_selected_table}' 加载数据。")
-            st.dataframe(st.session_state.df.head())
-            # Transition to column description step
-            st.session_state.file_uploaded = True # Set this flag
-            st.rerun() # Rerun to show column description form
+            if 'df' in st.session_state and isinstance(st.session_state.df, pd.DataFrame) and not st.session_state.df.empty:
+                st.dataframe(st.session_state.df.head())
+            elif 'df' in st.session_state: # 如果 df 是空 DataFrame
+                 st.info("加载的数据为空。")
+            else: # 如果 df 不存在 (理论上不应发生在此状态)
+                st.warning("数据框未加载。")
+
+            # --- 修改：不再需要rerun，直接进入列描述或聊天 ---
+            # 如果 file_uploaded 为 True，后续逻辑会自动进入列描述阶段
+            # st.session_state.file_uploaded = True # 已在 fetch_data 中设置
+            # st.rerun() # 移除这里的 rerun
+            # 让页面自然流转到下面的 elif ... descriptions_provided ...
 
 # --- 情况3：数据已上传/加载，但未提供列描述 ---
 elif st.session_state.get('file_uploaded') and not st.session_state.get('descriptions_provided'):
