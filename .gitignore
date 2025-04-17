@@ -12,6 +12,12 @@ codeexe/
 data/
 images/
 
+src/.cache/
+src/codeexe/
+src/data/
+src/session_assets/
+src/user_uploads/
+
 # 环境文件
 .env
 .venv
