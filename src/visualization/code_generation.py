@@ -16,22 +16,9 @@ config_list = [
 ]
 
 def generate_code(file_path, column_descriptions):
-    """生成可视化代码的函数
-    
-    Args:
-        file_path (str): 数据文件的路径，支持CSV或Excel
-        column_descriptions (dict): 数据列的描述信息，格式为 {列名: 描述}
-        
-    Returns:
-        tuple: (生成的代码, 错误信息)
-            - 如果成功生成代码，返回 (代码字符串, None)
-            - 如果失败，返回 (None, 错误信息字符串)
-    """
-    # 根据文件扩展名确定文件类型
+    """生成可视化代码的函数 (处理直接文件路径输入)"""
     file_extension = os.path.splitext(file_path)[1].lower()
-    
     try:
-        # 根据文件类型选择不同的读取方法
         if file_extension == '.csv':
             df_sample = pd.read_csv(file_path, nrows=5)
         elif file_extension in ['.xlsx', '.xls']:
@@ -39,76 +26,70 @@ def generate_code(file_path, column_descriptions):
         else:
             return None, f"不支持的文件类型: {file_extension}"
     except Exception as e:
-        return None, f"无法读取数据文件：{str(e)}"
-    
-    # 创建代码生成agent
+        # Need to construct full path to read sample if file_path is relative to src
+        try:
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            full_path_for_sample = os.path.join(project_root, "src", file_path)
+            print(f"[generate_code] Reading sample from: {full_path_for_sample}")
+            if file_extension == '.csv':
+                df_sample = pd.read_csv(full_path_for_sample, nrows=5)
+            elif file_extension in ['.xlsx', '.xls']:
+                df_sample = pd.read_excel(full_path_for_sample, nrows=5)
+        except Exception as e_full:
+            print(f"[generate_code] Error reading sample: {e_full}")
+            return None, f"无法读取数据文件样本：{str(e_full)}"
+
     code_generator = ConversableAgent(
         "code_generator",
         system_message="你是一个专业的数据可视化专家。请根据提供的数据描述和样本，对数据进行分析，并思考一种良好的可视化图表分析方法，生成合适的Python代码来创建数据可视化。必须使用matplotlib库，不要使用seaborn或其他可视化库。代码需要将生成的图表保存为'answer.svg'。",
         llm_config={"config_list": config_list},
         human_input_mode="NEVER"
     )
-    
-    # 准备数据信息
+
     columns_info = ""
     for col, desc in column_descriptions.items():
-        col_type = df_sample[col].dtype
-        columns_info += f"- {col} ({col_type}): {desc}\n"
-    
-    # 根据文件类型生成不同的代码模板
-    if file_extension == '.csv':
-        file_read_code = f"df = pd.read_csv('../{file_path}')"
-    else:  # Excel文件
-        file_read_code = f"df = pd.read_excel('../{file_path}')"
-    
+        if col in df_sample.columns:
+            col_type = df_sample[col].dtype
+            columns_info += f"- {col} ({col_type}): {desc}\n"
+        else:
+             columns_info += f"- {col}: {desc} (Type info unavailable)\n"
+
+    # --- 修改： 使用占位符 --- 
+    placeholder = 'data.csv' if file_extension == '.csv' else 'data.xlsx'
+    read_func = f"pd.read_{'csv' if file_extension == '.csv' else 'excel'}"
+    file_read_code = f"df = {read_func}('{placeholder}')"
+
     data_info = """
-    数据文件路径: ../{}
-    文件类型: {}
+数据类型: 文件 ({file_type})
+列描述:
+{columns_info}
+数据示例:
+{sample_data}
 
-    数据列描述:
-    {}
+请生成合适的Python代码来可视化这些数据。代码必须：
+1. 导入必要的库（pandas, matplotlib）
+2. 读取数据文件（使用下面提供的代码读取文件）
+3. 创建合适的可视化（必须使用matplotlib，不要使用seaborn）
+4. 将图表保存为'answer.svg'
 
-    数据示例:
-    {}
+读取文件的代码应该是:
+{file_read_code}
 
-    请生成合适的Python代码来可视化这些数据。代码必须：
-    1. 导入必要的库（pandas, matplotlib）
-    2. 读取数据文件（使用正确的函数读取{}文件）
-    3. 创建合适的可视化（必须使用matplotlib，不要使用seaborn）
-    4. 将图表保存为'answer.svg'
-
-    读取文件的代码应该是:
-    {}
-
-    请仅生成代码！不要生成其他内容！也不要生成```python```这样的符号！
-    """.format(
-        file_path, 
-        "CSV" if file_extension == '.csv' else "Excel", 
-        columns_info, 
-        df_sample.to_string(),
-        "CSV" if file_extension == '.csv' else "Excel",
-        file_read_code
+请仅生成代码！不要生成其他内容！也不要生成```python```这样的符号！
+""".format(
+        file_type="CSV" if file_extension == '.csv' else "Excel",
+        columns_info=columns_info,
+        sample_data=df_sample.to_string(),
+        file_read_code=file_read_code
     )
-    
-    # 生成代码
     code_response = code_generator.generate_reply(messages=[{"role": "user", "content": data_info}])
-    
     return code_response, None
 
-def generate_code_from_df(df, column_descriptions):
-    """从DataFrame生成可视化代码
-    
-    Args:
-        df (pandas.DataFrame): 数据框
-        column_descriptions (dict): 数据列的描述信息，格式为 {列名: 描述}
-        
-    Returns:
-        tuple: (生成的代码, 错误信息)
-            - 如果成功生成代码，返回 (代码字符串, None)
-            - 如果失败，返回 (None, 错误信息字符串)
-    """
+def generate_code_from_df(df, column_descriptions, persistent_file_path: str | None):
+    """从DataFrame生成可视化代码，使用传入的持久文件路径"""
+    if not persistent_file_path:
+         return None, "错误：需要提供 persistent_file_path 来生成代码。"
     try:
-        # 创建代码生成agent
         code_generator = ConversableAgent(
             "code_generator",
             system_message="你是一个专业的数据可视化专家。请根据提供的数据描述和样本，对数据进行分析，并思考一种良好的可视化图表分析方法，生成合适的Python代码来创建数据可视化。必须使用matplotlib库，不要使用seaborn或其他可视化库。代码需要将生成的图表保存为'answer.svg'。",
@@ -116,142 +97,119 @@ def generate_code_from_df(df, column_descriptions):
             human_input_mode="NEVER"
         )
         
-        # 准备数据信息
         columns_info = ""
         for col, desc in column_descriptions.items():
             if col in df.columns:
                 col_type = df[col].dtype
                 columns_info += f"- {col} ({col_type}): {desc}\n"
+
+        # --- 修改： 使用占位符 (需要知道文件类型) --- 
+        file_read_code = "# 无法确定文件类型，请手动添加读取代码" # Default if path is None
+        placeholder = None
+        file_type_for_prompt = "未知文件"
+        if persistent_file_path:
+            file_extension = os.path.splitext(persistent_file_path)[1].lower()
+            if file_extension == '.csv':
+                 placeholder = 'data.csv'
+                 file_read_code = f"df = pd.read_csv('{placeholder}')"
+                 file_type_for_prompt = "CSV"
+            elif file_extension in ['.xlsx', '.xls']:
+                 placeholder = 'data.xlsx'
+                 file_read_code = f"df = pd.read_excel('{placeholder}')"
+                 file_type_for_prompt = "Excel"
+
+        data_info = """
+数据类型: {file_type}
+列描述:
+{columns_info}
+数据示例:
+{sample_data}
+
+请生成合适的Python代码来可视化这些数据。代码必须：
+1. 导入必要的库（pandas, matplotlib）
+2. 读取数据文件（使用下面提供的代码读取文件）
+3. 创建合适的可视化（必须使用matplotlib，不要使用seaborn）
+4. 将图表保存为'answer.svg'
+
+读取文件的代码应该是:
+{file_read_code}
+
+请仅生成代码！不要生成其他内容！也不要生成```python```这样的符号！
+""".format(
+            file_type=file_type_for_prompt,
+            columns_info=columns_info,
+            sample_data=df.head().to_string(),
+            file_read_code=file_read_code
+        )
         
-        # 检查是不是MySQL数据源
-        is_mysql_source = False
-        table_name = None
-        if "mysql_selected_table" in st.session_state and st.session_state.mysql_selected_table:
-            is_mysql_source = True
-            table_name = st.session_state.mysql_selected_table
-        
-        # 根据数据源类型选择不同的数据获取方式
-        if is_mysql_source:
-            # 保存样本数据到数据上下文
-            data_sample = df.head().to_string()
-            
-            data_info = """
-            数据来源: MySQL数据库表 '{}'
-            
-            数据列描述:
-            {}
-
-            数据示例:
-            {}
-
-            请生成合适的Python代码来可视化这些数据。代码必须：
-            1. 导入必要的库（pandas, matplotlib, pymysql）
-            2. 连接MySQL数据库获取数据
-            3. 创建合适的可视化（必须使用matplotlib，不要使用seaborn）
-            4. 将图表保存为'answer.svg'
-
-            数据库连接和查询的代码应该是:
-            ```python
-            import pymysql
-            import pandas as pd
-            import matplotlib.pyplot as plt
-
-            # 连接MySQL数据库
-            connection = pymysql.connect(
-                host='localhost',
-                port=3306,
-                user='root',
-                password='password',
-                database='database_name'
-            )
-
-            # 查询数据
-            query = "SELECT * FROM `table_name`"  # 替换为实际表名
-            df = pd.read_sql(query, connection)
-            
-            # 关闭连接
-            connection.close()
-            ```
-
-            请仅生成代码！不要生成其他内容！也不要生成```python```这样的符号！
-            """.format(
-                table_name,
-                columns_info, 
-                data_sample
-            )
-        else:
-            # 保存DataFrame到临时文件
-            temp_id = uuid.uuid4().hex
-            temp_file = f"codeexe/temp_data_{temp_id}.csv"
-            
-            # 确保目录存在
-            if not os.path.exists('codeexe'):
-                os.makedirs('codeexe')
-                
-            df.to_csv(temp_file, index=False)
-            
-            data_info = """
-            数据列描述:
-            {}
-
-            数据示例:
-            {}
-
-            请生成合适的Python代码来可视化这些数据。代码必须：
-            1. 导入必要的库（pandas, matplotlib）
-            2. 读取数据文件（使用pd.read_csv读取文件）
-            3. 创建合适的可视化（必须使用matplotlib，不要使用seaborn）
-            4. 将图表保存为'answer.svg'
-
-            读取文件的代码应该是:
-            df = pd.read_csv('{}')
-
-            请仅生成代码！不要生成其他内容！也不要生成```python```这样的符号！
-            """.format(
-                columns_info, 
-                df.head().to_string(),
-                temp_file
-            )
-        
-        # 生成代码
         code_response = code_generator.generate_reply(messages=[{"role": "user", "content": data_info}])
-        
         return code_response, None
     except Exception as e:
         return None, f"生成可视化代码时出错：{str(e)}"
 
-def create_chart(file_path=None, column_descriptions=None, df=None):
+def create_chart(user_id: str, session_id: str, column_descriptions, data_source_type: str, df=None, persistent_file_path=None):
     """创建图表的函数
-    
+
     Args:
-        file_path (str, optional): 数据文件的路径
-        column_descriptions (dict, optional): 数据列的描述信息，格式为 {列名: 描述}
-        df (pandas.DataFrame, optional): 数据框，如果提供则使用数据框而不是文件
+        # ... (user_id, session_id, column_descriptions, df, persistent_file_path)
+        data_source_type (str): 数据源类型 ('csv', 'excel', 'mysql')
         
     Returns:
-        tuple: (生成的代码, 图片路径, 结果信息)
-            - 如果成功生成图表，返回 (代码字符串, 图片路径, "图表生成成功")
-            - 如果失败，返回 (None, None, 错误信息字符串)
+        tuple: (生成的代码, 图片相对路径, 结果信息)
     """
+    if not user_id or not session_id:
+         return None, None, "创建图表需要 user_id 和 session_id"
+    
+    # --- 修改：移除对 df 和 persistent_file_path 同时存在的严格要求（因为 mysql 类型只有 df）---
+    # if df is not None and not persistent_file_path:
+    #      return None, None, "从 DataFrame 创建图表时需要提供 persistent_file_path"
+    
+    # --- 新增：对 MySQL 类型的处理 --- 
+    is_mysql = (data_source_type == 'mysql')
+    if not is_mysql and not persistent_file_path:
+         return None, None, "文件类型数据源需要 persistent_file_path"
+    if df is None and not persistent_file_path: # Should not happen with current flow
+         return None, None, "需要提供 DataFrame 或文件路径"
+
     try:
-        # 根据输入选择不同的代码生成方式
-        if df is not None:
-            code, error = generate_code_from_df(df, column_descriptions)
-        elif file_path:
-            code, error = generate_code(file_path, column_descriptions)
+        code = None
+        error = None
+        
+        # --- 修改：调用 generate_code* 函数时，传递必要的参数 ---
+        # generate_code_from_df/generate_code 现在也需要知道类型以使用正确的占位符
+        # 它们内部不再保存临时文件，而是直接构建 prompt
+        if df is not None: 
+            # 对于文件类型，需要路径来告知LLM如何读取；对于MySQL，路径为空
+            path_to_use_in_prompt = persistent_file_path if not is_mysql else None 
+            print(f"[create_chart] Generating code from DF. Type: {data_source_type}, Path for prompt: {path_to_use_in_prompt}")
+            # TODO: Refactor generate_code_from_df to accept type and path
+            # Assuming generate_code_from_df is updated or implicitly handles this via context passed earlier
+            code, error = generate_code_from_df(df, column_descriptions, persistent_file_path if not is_mysql else None) # Pass path only if file
+        elif persistent_file_path: # Only file path case
+            print(f"[create_chart] Generating code from file path: {persistent_file_path}")
+            code, error = generate_code(persistent_file_path, column_descriptions)
         else:
-            return None, None, "需要提供数据文件路径或数据框"
-        
-        if error:
-            return None, None, error
-        
-        # 执行代码生成图表
-        success, image_path = execute_code(code)
+            return None, None, "无法确定生成代码的方式。"
+
+        if error: return None, None, error
+        if not code: return None, None, "未能生成可视化代码"
+
+        # --- 修改：调用 execute_code 时传递 data_source_type 和 persistent_file_path --- 
+        print(f"[create_chart] Generated code, attempting execution with type: {data_source_type}, path: {persistent_file_path}")
+        success, image_path = execute_code(
+            code,
+            user_id=user_id, 
+            session_id=session_id,
+            data_source_type=data_source_type, # Pass the type
+            persistent_file_path=persistent_file_path # Pass the path (can be None for mysql)
+        )
         
         if success:
             return code, image_path, "图表生成成功"
         else:
-            return None, None, "图表生成失败"
-            
+             return code, None, "图表生成失败 (代码执行出错)"
+
     except Exception as e:
+        import traceback
+        print(f"创建图表时发生严重错误: {e}\n{traceback.format_exc()}")
         return None, None, f"创建图表时出错：{str(e)}" 

@@ -13,6 +13,9 @@ from src.web_utils.ui_elements import display_sidebar_user_info, display_error, 
 from src.database.mysql import connect_mysql, get_mysql_tables, get_mysql_table_data, close_mysql_connection
 from src.visualization.code_execution import execute_code
 from src.ai.streaming import get_streaming_response
+from src.database.chat_history_db import add_message_to_session, get_messages_by_session, update_session_name, get_session_details, update_session_data_context
+from bson import ObjectId
+import functools # Import functools for partial if needed, or use args/kwargs directly
 
 st.set_page_config(
     page_title="数据分析 | 数据分析助手",
@@ -20,10 +23,44 @@ st.set_page_config(
     layout="wide"
 )
 
+# --- Define the callback function --- 
+def apply_code_callback(code_to_apply):
+    if code_to_apply:
+        print("调用回调函数！！！")
+        print(f"[Apply Code Callback] Applying code:\n---\n{code_to_apply}\n---")
+        st.session_state.visualization_code = code_to_apply
+        st.session_state.chart_status = "applied" # Set status directly
+        print(f"[Apply Code Callback] visualization_code and chart_status updated.")
+        st.toast("代码已应用到右侧面板！")
+    else:
+        print("[Apply Code Callback] Error: Code to apply is empty.")
+        st.toast("错误：无法应用空代码。", icon="🚨")
+
+# Initialize the flag if it doesn't exist
+if 'code_just_applied' not in st.session_state:
+    st.session_state.code_just_applied = False
+
 # 检查用户是否登录
 if not is_logged_in():
     st.warning("请先登录")
     st.switch_page("pages/login.py")
+    st.stop()
+
+# --- 新增：检查当前是否有激活的会话ID ---
+if "current_session_id" not in st.session_state or st.session_state.current_session_id is None:
+    st.warning("没有活动的会话。请先选择一个历史会话或创建一个新会话。")
+    st.switch_page("pages/session_manager.py")
+    st.stop()
+
+# 获取当前会话ID和名称 (此时它们应该已存在)
+current_session_id = st.session_state.current_session_id
+# 确保 current_session_name 也存在，如果不存在，可以尝试从数据库获取或设为默认值
+if "current_session_name" not in st.session_state:
+     session_details = db.chat_sessions.find_one({"_id": ObjectId(current_session_id)}, {"session_name": 1})
+     if session_details:
+         st.session_state.current_session_name = session_details.get("session_name", "会话")
+     else:
+        st.session_state.current_session_name = "会话" # 或从数据库查询名称
 
 # 设置页面样式
 st.markdown("""
@@ -101,14 +138,71 @@ st.markdown("""
 
 # 显示侧边栏
 with st.sidebar:
-    display_sidebar_user_info(st.session_state.user_info)
+    # 可以添加一个返回会话管理页面的按钮
+    if st.button("返回会话列表"): # 使用不同的 key 以避免冲突
+        st.switch_page("pages/session_manager.py")
+    st.markdown("---")
+    # 确保 user_info 存在
+    if 'user_info' in st.session_state:
+        display_sidebar_user_info(st.session_state.user_info)
 
 # 页面标题
 st.title("数据分析")
 
+# 显示和编辑当前会话名称 
+# 使用 session state 来控制编辑状态
+if 'editing_session_name' not in st.session_state:
+    st.session_state.editing_session_name = False
+
+# 创建两列布局用于显示名称和编辑按钮
+title_col1, title_col2 = st.columns([0.85, 0.15]) # 调整比例
+
+with title_col1:
+    if st.session_state.editing_session_name:
+        # 显示文本输入框供编辑
+        new_name = st.text_input(
+            "编辑会话名称:",
+            value=st.session_state.current_session_name,
+            key="edit_session_name_input",
+            label_visibility="collapsed" # 隐藏标签
+        )
+    else:
+        # 显示当前会话名称
+        st.subheader(f"当前会话: {st.session_state.current_session_name}")
+
+with title_col2:
+    if st.session_state.editing_session_name:
+        # 显示保存和取消按钮
+        save_col, cancel_col = st.columns(2)
+        with save_col:
+            if st.button("✔️", key="save_session_name", help="保存名称"):
+                if new_name != st.session_state.current_session_name:
+                    # 调用数据库更新
+                    # 需要从 chat_history_db 导入 ObjectId 和 db 用于后备查询
+                    from src.database.chat_history_db import db, ObjectId
+                    success = update_session_name(current_session_id, new_name)
+                    if success:
+                        st.session_state.current_session_name = new_name
+                        st.success("名称已更新")
+                    else:
+                        st.error("更新失败")
+                st.session_state.editing_session_name = False
+                st.rerun() # 更新UI
+        with cancel_col:
+            if st.button("✖️", key="cancel_edit_session_name", help="取消编辑"):
+               st.session_state.editing_session_name = False
+               st.rerun() # 更新UI
+    else:
+        # 显示编辑按钮
+        if st.button("✏️", key="edit_session_name_button", help="编辑会话名称"):
+            st.session_state.editing_session_name = True
+            st.rerun() # 更新UI以显示输入框
+
+st.markdown("---") # 分隔线
+
 # 初始化会话状态
-if "messages" not in st.session_state:  # 存储对话历史
-    st.session_state.messages = []
+if "messages" not in st.session_state:
+    st.session_state.messages = get_messages_by_session(current_session_id)
 if "df" not in st.session_state:  # 存储数据框
     st.session_state.df = None
 if "file_uploaded" not in st.session_state:  # 标记文件是否已上传
@@ -158,555 +252,864 @@ if "mysql_connection_info" not in st.session_state:
 if "mysql_step" not in st.session_state:
     st.session_state.mysql_step = "connect"  # 可能的值: "connect", "select_table", "fetch_data", "data_loaded"
 
-# 仅在初始阶段显示文件上传组件
-if not st.session_state.file_uploaded:
-    # 添加数据来源选择
+# --- 新增：会话管理状态 ---
+if "current_session_id" not in st.session_state:
+    st.session_state.current_session_id = None # 初始时没有当前会话
+
+# --- Modify Context Recovery ---
+# 修改：在检查 flag 之前初始化 has_data_context 和 session_details
+has_data_context = False
+session_details = None
+
+# Check the flag BEFORE potentially resetting states
+if not st.session_state.code_just_applied:
+    with st.spinner("正在加载会话信息..."): # Keep spinner for normal load
+        session_details = get_session_details(current_session_id)
+    
+    if not session_details:
+        st.error("无法加载会话信息，请返回会话列表重试。")
+        if st.button("返回会话列表"):
+            st.switch_page("pages/session_manager.py")
+        st.stop()
+    
+    if session_details.get("data_source_details"):
+        has_data_context = True # Set to True only if details exist
+        st.session_state.loaded_context = session_details
+        # Only preset if df not loaded to avoid overwriting
+        if 'df' not in st.session_state or st.session_state.df is None:
+            st.session_state.file_uploaded = True
+            st.session_state.descriptions_provided = True
+        # Restore other context details if not already present
+        if 'column_descriptions' not in st.session_state and session_details["data_source_details"].get("column_descriptions"):
+            st.session_state.column_descriptions = session_details["data_source_details"]["column_descriptions"]
+        if 'file_type' not in st.session_state and session_details.get("data_source_type"):
+            st.session_state.file_type = session_details["data_source_type"]
+        if 'file_path' not in st.session_state and session_details["data_source_details"].get("stored_path"):
+            st.session_state.file_path = session_details["data_source_details"]["stored_path"]
+        if 'mysql_connection_info' not in st.session_state and session_details["data_source_details"].get("connection_info"):
+            st.session_state.mysql_connection_info = session_details["data_source_details"]["connection_info"]
+        if 'mysql_selected_table' not in st.session_state and session_details["data_source_details"].get("table_name"):
+            st.session_state.mysql_selected_table = session_details["data_source_details"]["table_name"]
+    else:
+        # Initialize states if no context and not already set
+        if 'file_uploaded' not in st.session_state: st.session_state.file_uploaded = False
+        if 'descriptions_provided' not in st.session_state: st.session_state.descriptions_provided = False
+        if 'df' not in st.session_state: st.session_state.df = None
+        if 'column_descriptions' not in st.session_state: st.session_state.column_descriptions = {}
+elif st.session_state.code_just_applied: # Added elif for clarity
+    print("[Context Check] Skipping context recovery due to code_just_applied flag.")
+    # Important: Reset the flag after checking it for this run
+    st.session_state.code_just_applied = False
+    if 'loaded_context' in st.session_state:
+        session_details = st.session_state.loaded_context # Use stored context if available
+        # Re-determine has_data_context based on stored context
+        if session_details and session_details.get("data_source_details"):
+            has_data_context = True
+            # Restore minimal needed state if not already set
+            if 'column_descriptions' not in st.session_state and session_details["data_source_details"].get("column_descriptions"):
+                st.session_state.column_descriptions = session_details["data_source_details"]["column_descriptions"]
+            # ... restore other essential states for rendering ...
+            if 'file_type' not in st.session_state and session_details.get("data_source_type"):
+                st.session_state.file_type = session_details["data_source_type"]
+            if 'file_path' not in st.session_state and session_details["data_source_details"].get("stored_path"):
+                st.session_state.file_path = session_details["data_source_details"]["stored_path"]
+                  
+    elif 'session_details' not in locals() or session_details is None: # If not available even from state
+        # Fetch essential details if necessary (e.g., for name)
+        print("[Context Check] Fetching minimal session details after flag check.") # Log this
+        with st.spinner("加载基本会话信息..."): # Add spinner here too
+            session_details = get_session_details(current_session_id)
+        # Determine context based on freshly fetched details
+        if session_details and session_details.get("data_source_details"):
+            has_data_context = True
+            # Restore minimal state again if needed
+            if 'column_descriptions' not in st.session_state and session_details["data_source_details"].get("column_descriptions"):
+                st.session_state.column_descriptions = session_details["data_source_details"]["column_descriptions"]
+
+
+# Ensure session name is present after context check
+if "current_session_name" not in st.session_state and session_details:
+    st.session_state.current_session_name = session_details.get("session_name", "会话")
+
+# 检查 df 是否已加载 (用于判断是否需要显示加载按钮或数据已加载)
+df_loaded = 'df' in st.session_state and isinstance(st.session_state.df, pd.DataFrame) and not st.session_state.df.empty
+
+if has_data_context and not df_loaded:
+    # --- 情况1：有历史上下文，但数据尚未加载 --- 
+    st.subheader("数据源信息")
+    context_type = st.session_state.loaded_context.get("data_source_type", "未知")
+    context_details = st.session_state.loaded_context.get("data_source_details", {})
+
+    if context_type in ['csv', 'excel']:
+        file_path = context_details.get("stored_path", "未知路径")
+        # 尝试从路径中提取原始文件名
+        try:
+            original_filename = os.path.basename(file_path).split('_', 1)[-1]
+        except Exception:
+            original_filename = os.path.basename(file_path) # Fallback
+             
+        st.info(f"当前会话使用文件: **{original_filename}** (类型: {context_type.upper()}) Path: `{file_path}`")
+        load_button_label = "加载数据文件"
+
+        with st.expander("查看列描述"):
+            descriptions = context_details.get("column_descriptions", {})
+            if descriptions:
+                for col, desc in descriptions.items():
+                    st.write(f"**{col}**: {desc if desc else '-'}")
+            else:
+                st.write("无列描述信息。")
+
+        # --- 加载数据按钮 ---
+        if st.button(load_button_label, key="load_file_context", type="primary"):
+            with st.spinner(f"正在加载文件 {original_filename}..."):
+                try:
+                    # 构建完整路径来读取
+                    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+                    full_path = os.path.join(project_root, "src", file_path)
+                    print(f"Attempting to load file from: {full_path}") # Debug print
+
+                    if not os.path.exists(full_path):
+                        raise FileNotFoundError(f"数据文件未找到: {full_path}")
+
+                    if context_type == "csv":
+                        st.session_state.df = pd.read_csv(full_path)
+                    else: # excel
+                        try:
+                            st.session_state.df = pd.read_excel(full_path, engine='openpyxl')
+                        except Exception as e_openpyxl:
+                            print(f"Failed loading Excel with openpyxl: {e_openpyxl}")
+                            try:
+                                st.session_state.df = pd.read_excel(full_path, engine='xlrd') # Try xlrd
+                            except Exception as e_xlrd:
+                                print(f"Failed loading Excel with xlrd: {e_xlrd}")
+                                raise Exception(f"无法读取Excel文件 {original_filename}。请确保文件存在且格式正确。")
+
+                    # 检查加载后的DataFrame
+                    if isinstance(st.session_state.df, pd.DataFrame) and not st.session_state.df.empty:
+                        time.sleep(0.5) # Short delay before rerun
+                        st.rerun()
+                    else:
+                        st.error("加载数据失败或文件为空。")
+                        if 'df' in st.session_state: del st.session_state.df 
+                        
+                except FileNotFoundError as fnf_error:
+                    st.error(str(fnf_error))
+                except Exception as e:
+                    st.error(f"加载数据时出错: {e}")
+                    if 'df' in st.session_state: del st.session_state.df 
+
+    elif context_type == 'mysql':
+        conn_info = context_details.get("connection_info", {})
+        table_name = context_details.get("table_name", "未知表")
+        st.info(f"当前会话使用 MySQL 表: **{table_name}** (来自数据库: {conn_info.get('database', '?')} at {conn_info.get('host','?')}) ")
+        load_button_label = "连接并加载 MySQL 数据"
+
+        with st.expander("查看列描述"):
+            descriptions = context_details.get("column_descriptions", {})
+            if descriptions:
+                for col, desc in descriptions.items():
+                    st.write(f"**{col}**: {desc if desc else '-'}")
+            else:
+                st.write("无列描述信息。")
+
+        # --- 加载 MySQL 数据按钮 --- 
+        st.warning("加载 MySQL 数据需要您重新确认连接信息并输入密码。")
+        with st.form("mysql_reload_form"):
+            st.write("**数据库连接信息 (无密码):**")
+            st.json(conn_info) # Display saved connection info (no password)
+            password = st.text_input("请输入数据库密码", type="password", key="mysql_reload_password")
+            submitted = st.form_submit_button(load_button_label)
+
+            if submitted:
+                if not password:
+                    st.error("请输入密码。")
+                else:
+                    full_conn_info = {**conn_info, "password": password}
+                    with st.spinner(f"正在连接并加载表 {table_name}..."):
+                        try:
+                            connection, conn_error = connect_mysql(**full_conn_info)
+                            if conn_error:
+                                raise Exception(f"连接失败: {conn_error}")
+                            
+                            df, data_error = get_mysql_table_data(connection, table_name, limit=1000) # Use limit?
+                            close_mysql_connection(connection) # Close connection after fetching
+                            
+                            if data_error:
+                                raise Exception(f"获取数据失败: {data_error}")
+                            
+                            if df is None or df.empty:
+                                raise Exception("从数据库获取的数据为空。")
+                                
+                            st.session_state.df = df
+                            # 恢复 session_state 中与MySQL相关的标记
+                            st.session_state.mysql_connection_info = conn_info # Store info without password again
+                            st.session_state.mysql_selected_table = table_name
+                            st.session_state.mysql_data_fetched = True
+                            st.session_state.mysql_step = "data_loaded"
+                            # Don't show success toast here
+                            time.sleep(0.5)
+                            st.rerun()
+                        
+                        except Exception as e:
+                            st.error(f"加载 MySQL 数据时出错: {e}")
+                            if 'df' in st.session_state: del st.session_state.df 
+
+    else:
+        st.error("无法识别的数据源上下文。请尝试重新上传数据或联系管理员。")
+
+# --- 情况2：没有历史上下文，需要用户上传或连接 --- 
+elif not st.session_state.get('file_uploaded'): # Use .get() for safety
+     # 包含整个 if data_source == "本地文件": ... else: # MySQL数据库 ... end 的块
+     # (确保这里的代码是完整的) 
     data_source = st.radio(
         "请选择数据来源",
         ["本地文件", "MySQL数据库"],
-        index=0
+        index=0, key="data_source_selection"
     )
-    
     if data_source == "本地文件":
-        # 添加文件类型选择下拉菜单
-        file_type = st.selectbox(
-            "请选择数据文件类型",
-            ["CSV", "Excel"],
-            index=0
-        )
-        
-        # 根据选择的文件类型显示不同的文件上传器
-        if file_type == "CSV":
-            uploaded_file = st.file_uploader("请上传您的CSV文件", type=['csv'])
-        else:  # Excel
-            uploaded_file = st.file_uploader("请上传您的Excel文件", type=['xlsx', 'xls'])
-
-        # 用户上传文件
+        # (文件上传UI...)
+        file_type = st.selectbox("请选择数据文件类型", ["CSV", "Excel"], index=0, key="file_type_selection")
+        uploaded_file = st.file_uploader(f"请上传您的{file_type}文件", type=['csv'] if file_type == "CSV" else ['xlsx', 'xls'], key="file_uploader_widget")
         if uploaded_file is not None:
-            # 保存文件类型
-            st.session_state.file_type = file_type
-            
-            # 根据文件类型确定文件扩展名
-            file_extension = '.csv' if file_type == "CSV" else '.xlsx'
-            
-            # 确保数据目录存在
-            if not os.path.exists('data'):
-                os.makedirs('data')
-                
-            # 生成唯一文件名并保存上传的文件到本地
-            file_name = f"data/{uuid.uuid4().hex}{file_extension}"
-            with open(file_name, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            
-            # 根据文件类型读取数据
             try:
+                original_filename = uploaded_file.name
+                user_id = st.session_state.user_info['username']
+                session_id = current_session_id
+                file_extension = os.path.splitext(original_filename)[1].lower()
+                unique_filename = f"{uuid.uuid4().hex}_{original_filename}"
+                upload_dir_relative = os.path.join("user_uploads", str(user_id), str(session_id))
+                stored_path_relative = os.path.join(upload_dir_relative, unique_filename)
+                project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+                upload_dir_full = os.path.join(project_root, "src", upload_dir_relative)
+                stored_path_full = os.path.join(upload_dir_full, unique_filename)
+                os.makedirs(upload_dir_full, exist_ok=True)
+                with open(stored_path_full, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+                print(f"文件已保存到: {stored_path_full}")
                 if file_type == "CSV":
-                    st.session_state.df = pd.read_csv(file_name)
-                else:  # Excel
-                    # 添加更详细的调试信息
-                    st.write(f"正在读取文件: {file_name}")
-                    st.write(f"文件大小: {os.path.getsize(file_name)} 字节")
-                    
-                    # 尝试使用openpyxl引擎读取
+                    st.session_state.df = pd.read_csv(stored_path_full)
+                else:
                     try:
-                        st.session_state.df = pd.read_excel(file_name, engine='openpyxl')
+                        st.session_state.df = pd.read_excel(stored_path_full, engine='openpyxl')
                     except Exception as e1:
-                        st.write(f"使用openpyxl引擎失败: {str(e1)}")
-                        # 尝试使用xlrd引擎
-                        try:
-                            st.session_state.df = pd.read_excel(file_name, engine='xlrd')
-                        except Exception as e2:
-                            st.write(f"使用xlrd引擎失败: {str(e2)}")
-                            raise Exception(f"无法读取Excel文件。openpyxl错误: {str(e1)}, xlrd错误: {str(e2)}")
+                        print(f"使用openpyxl读取失败: {e1}")
+                        st.session_state.df = pd.read_excel(stored_path_full, engine='xlrd')
+                file_info_content = {
+                    "original_filename": original_filename,
+                    "stored_path": stored_path_relative.replace(os.sep, '/'),
+                    "file_size": uploaded_file.size,
+                    "mime_type": uploaded_file.type
+                }
+                add_message_to_session(
+                    session_id=session_id,
+                    username=user_id,
+                    role="user",
+                    content_type="file_upload",
+                    content=file_info_content
+                )
+                st.session_state.file_uploaded = True
+                st.session_state.file_path = stored_path_relative.replace(os.sep, '/')
+                st.session_state.file_type = file_type.lower() # Use lower case type
+                st.session_state.column_descriptions = {col: "" for col in st.session_state.df.columns}
+                st.session_state.messages = get_messages_by_session(session_id)
+                st.success(f"文件 '{original_filename}' 上传并加载成功！")
+                st.rerun()
             except Exception as e:
-                st.error(f"读取文件时出错: {str(e)}")
-                st.error("请确保文件格式正确且包含数据")
+                import traceback
+                print(traceback.format_exc())
+                st.error(f"处理上传文件时出错: {str(e)}")
+                if 'df' in st.session_state: del st.session_state.df
+                st.session_state.file_uploaded = False
                 st.stop()
-            
-            # 更新状态
-            st.session_state.file_uploaded = True  # 更新文件上传状态
-            st.session_state.file_path = file_name  # 更新文件名
-            # 为每一列创建空描述字典
-            st.session_state.column_descriptions = {col: "" for col in st.session_state.df.columns}
-            st.rerun()  # 重新运行应用以更新UI
-    
-    else:  # MySQL数据库
-        # 步骤1: 连接数据库
+    else: # MySQL数据库
+        # (MySQL 连接 UI 逻辑 - 保持原样或根据需要调整)
+        if 'mysql_step' not in st.session_state: st.session_state.mysql_step = "connect"
+         
         if st.session_state.mysql_step == "connect":
             st.subheader("步骤1: 连接MySQL数据库")
-            
-            # 创建输入字段
             col1, col2 = st.columns(2)
-            
             with col1:
-                host = st.text_input("服务器地址", value="localhost")
-                port = st.number_input("端口", min_value=1, max_value=65535, value=3306)
-                user = st.text_input("用户名")
-                password = st.text_input("密码", type="password")
-            
+                host = st.text_input("服务器地址", value="localhost", key="mysql_host")
+                port = st.number_input("端口", min_value=1, max_value=65535, value=3306, key="mysql_port")
+                user = st.text_input("用户名", key="mysql_user")
+                password = st.text_input("密码", type="password", key="mysql_pass")
             with col2:
-                database = st.text_input("数据库名")
-            
-            # 连接按钮
-            if st.button("连接数据库"):
-                # 保存连接信息到session state
-                st.session_state.mysql_connection_info = {
-                    "host": host,
-                    "port": port,
-                    "user": user,
-                    "password": password,
-                    "database": database
-                }
-                
-                # 尝试连接MySQL数据库
-                connection, error = connect_mysql(
-                    host=host,
-                    port=port,
-                    user=user,
-                    password=password,
-                    database=database
-                )
-                
+                database = st.text_input("数据库名", key="mysql_db")
+            if st.button("连接数据库", key="mysql_connect_btn"):
+                conn_info = {"host": host, "port": port, "user": user, "password": password, "database": database}
+                connection, error = connect_mysql(**conn_info)
                 if error:
                     st.error(f"连接失败: {error}")
                 else:
-                    # 保存连接对象到session state
-                    st.session_state.mysql_connection = connection
-                    
-                    # 获取数据库中的所有表
+                    st.session_state.mysql_connection = connection # Store connection object (temporary)
                     tables = get_mysql_tables(connection)
-                    
                     if not tables:
                         st.warning("数据库中没有找到表")
+                        close_mysql_connection(connection)
                     else:
-                        # 保存表列表到session state
                         st.session_state.mysql_tables = tables
-                        st.session_state.mysql_connection_form_submitted = True
+                        st.session_state.mysql_connection_info = {k: v for k, v in conn_info.items() if k != 'password'} # Store safe info
                         st.session_state.mysql_step = "select_table"
                         st.success("数据库连接成功！请选择要分析的表。")
                         st.rerun()
 
-        # 步骤2: 选择表
         elif st.session_state.mysql_step == "select_table":
             st.subheader("步骤2: 选择要分析的表")
             st.info(f"已连接到 {st.session_state.mysql_connection_info['database']} 数据库")
-            
-            # 显示表选择下拉菜单
-            selected_table = st.selectbox("请选择要分析的表", st.session_state.mysql_tables)
-            
-            # 保存选择的表到session state
+            selected_table = st.selectbox("请选择要分析的表", st.session_state.mysql_tables, key="mysql_table_select")
             st.session_state.mysql_selected_table = selected_table
-            
-            # 创建两列布局
             col1, col2 = st.columns(2)
-            
             with col1:
-                # 获取数据按钮
-                if st.button("获取表数据"):
+                if st.button("获取表数据", key="mysql_fetch_btn"):
                     st.session_state.mysql_step = "fetch_data"
                     st.rerun()
-            
             with col2:
-                # 断开连接按钮
-                if st.button("断开连接"):
-                    # 关闭数据库连接
-                    close_mysql_connection(st.session_state.mysql_connection)
-                    # 清除session state
-                    st.session_state.mysql_connection = None
-                    st.session_state.mysql_tables = None
-                    st.session_state.mysql_selected_table = None
-                    st.session_state.mysql_connection_form_submitted = False
-                    st.session_state.mysql_data_fetched = False
-                    st.session_state.mysql_connection_info = None
-                    st.session_state.mysql_step = "connect"
+                if st.button("断开连接", key="mysql_disconnect_btn"):
+                    if st.session_state.get('mysql_connection'): close_mysql_connection(st.session_state.mysql_connection)
+                    # Clear relevant state
+                    keys_to_clear = ['mysql_connection', 'mysql_tables', 'mysql_selected_table', 'mysql_connection_info', 'mysql_step']
+                    for key in keys_to_clear: 
+                        if key in st.session_state: del st.session_state[key]
                     st.rerun()
-        
-        # 步骤3: 获取数据
+         
         elif st.session_state.mysql_step == "fetch_data":
             st.subheader("步骤3: 获取表数据")
-            st.info(f"正在从 {st.session_state.mysql_connection_info['database']} 数据库的 {st.session_state.mysql_selected_table} 表中获取数据")
-            
-            # 显示进度条
+            st.info(f"正在从 {st.session_state.mysql_connection_info['database']} 的 {st.session_state.mysql_selected_table} 表获取数据")
             progress_bar = st.progress(0)
             status_text = st.empty()
-            
             try:
-                status_text.text("正在连接数据库...")
-                progress_bar.progress(10)
-                
-                # 检查连接是否有效
-                if not st.session_state.mysql_connection or not hasattr(st.session_state.mysql_connection, 'is_connected') or not st.session_state.mysql_connection.is_connected():
-                    # 尝试重新连接
-                    connection, error = connect_mysql(
-                        host=st.session_state.mysql_connection_info['host'],
-                        port=st.session_state.mysql_connection_info['port'],
-                        user=st.session_state.mysql_connection_info['user'],
-                        password=st.session_state.mysql_connection_info['password'],
-                        database=st.session_state.mysql_connection_info['database']
-                    )
-                    
-                    if error:
-                        st.error(f"重新连接失败: {error}")
-                        st.session_state.mysql_connection = None
-                        st.session_state.mysql_tables = None
-                        st.session_state.mysql_connection_form_submitted = False
-                        st.session_state.mysql_step = "connect"
-                        st.rerun()
-                    else:
-                        st.session_state.mysql_connection = connection
-                
-                status_text.text("正在获取表数据...")
-                progress_bar.progress(30)
-                
-                # 从选定的表中获取数据，限制最大行数为1000
-                try:
-                    df, error = get_mysql_table_data(st.session_state.mysql_connection, st.session_state.mysql_selected_table, limit=1000)
-                    
-                    if error:
-                        st.error(f"获取数据失败: {error}")
-                        progress_bar.progress(100)
-                        st.session_state.mysql_step = "select_table"
-                        st.rerun()
-                        
-                    if df is None or df.empty:
-                        st.error("获取到的数据为空")
-                        progress_bar.progress(100)
-                        st.session_state.mysql_step = "select_table"
-                        st.rerun()
-                        
-                    progress_bar.progress(70)
-                    status_text.text("数据处理中...")
-                    progress_bar.progress(90)
-                    
-                    # 保存数据到session state
-                    st.session_state.df = df
-                    st.session_state.file_uploaded = True
-                    st.session_state.file_type = "mysql"
-                    # 为每一列创建空描述字典
-                    st.session_state.column_descriptions = {col: "" for col in st.session_state.df.columns}
-                    st.session_state.mysql_data_fetched = True
-                    
-                    status_text.text("数据获取成功！")
-                    progress_bar.progress(100)
-                    
-                    # 显示数据预览
-                    st.subheader("数据预览")
-                    st.dataframe(st.session_state.df.head())
-                    
-                    # 显示数据统计信息
-                    st.subheader("数据统计")
-                    st.write(f"总行数: {len(st.session_state.df)}")
-                    st.write(f"总列数: {len(st.session_state.df.columns)}")
-                    
-                    # 设置步骤为数据已加载
-                    st.session_state.mysql_step = "data_loaded"
-                    
-                    # 添加继续按钮
-                    if st.button("继续分析"):
-                        st.rerun()
-                    
-                except Exception as e:
-                    st.error(f"获取表数据时发生错误: {str(e)}")
-                    progress_bar.progress(100)
-                    st.session_state.mysql_step = "select_table"
+                # Re-establish connection using stored info (need password from user implicitly?)
+                # This part is tricky without password - assuming connection is still valid or prompting
+                if not st.session_state.get('mysql_connection') or not st.session_state.mysql_connection.is_connected():
+                    # Reconnect logic might fail here without password.
+                    # Let's assume connection is valid for now, or prompt user
+                    st.error("数据库连接已断开，请重新连接。") 
+                    st.session_state.mysql_step = "connect"
                     st.rerun()
-                    
-            except Exception as e:
-                st.error(f"发生错误: {str(e)}")
-                progress_bar.progress(100)
-                st.session_state.mysql_step = "select_table"
+                    st.stop()
+                      
+                status_text.text("正在获取表数据..."); progress_bar.progress(50)
+                df, error = get_mysql_table_data(st.session_state.mysql_connection, st.session_state.mysql_selected_table, limit=1000)
+                 
+                if error:
+                    raise Exception(f"获取数据失败: {error}")
+                if df is None or df.empty:
+                    raise Exception("获取到的数据为空。")
+                     
+                st.session_state.df = df
+                st.session_state.file_uploaded = True
+                st.session_state.file_type = "mysql"
+                st.session_state.column_descriptions = {col: "" for col in st.session_state.df.columns}
+                st.session_state.mysql_data_fetched = True
+                st.session_state.mysql_step = "data_loaded"
+                status_text.text("数据获取成功！"); progress_bar.progress(100)
                 st.rerun()
-        
-        # 步骤4: 数据已加载
+            except Exception as e:
+                st.error(f"获取 MySQL 数据时出错: {e}")
+                progress_bar.progress(100); status_text.text("失败")
+                # Go back to selection? 
+                st.session_state.mysql_step = "select_table"
+                # Don't rerun immediately, let user see error
+
         elif st.session_state.mysql_step == "data_loaded":
-            st.subheader("数据已加载")
-            st.success(f"已成功从 {st.session_state.mysql_connection_info['database']} 数据库的 {st.session_state.mysql_selected_table} 表中获取数据")
-            
-            # 显示数据预览
-            st.subheader("数据预览")
+            st.subheader("MySQL 数据已加载")
+            st.success(f"已从表 '{st.session_state.mysql_selected_table}' 加载数据。")
             st.dataframe(st.session_state.df.head())
-            
-            # 显示数据统计信息
-            st.subheader("数据统计")
-            st.write(f"总行数: {len(st.session_state.df)}")
-            st.write(f"总列数: {len(st.session_state.df.columns)}")
-            
-            # 添加断开连接按钮
-            if st.button("断开连接"):
-                # 关闭数据库连接
-                close_mysql_connection(st.session_state.mysql_connection)
-                # 清除session state
-                st.session_state.mysql_connection = None
-                st.session_state.mysql_tables = None
-                st.session_state.mysql_selected_table = None
-                st.session_state.mysql_connection_form_submitted = False
-                st.session_state.mysql_data_fetched = False
-                st.session_state.mysql_connection_info = None
-                st.session_state.mysql_step = "connect"
-                st.rerun() 
+            # Transition to column description step
+            st.session_state.file_uploaded = True # Set this flag
+            st.rerun() # Rerun to show column description form
 
-# 用户填写描述表单
-if st.session_state.file_uploaded and not st.session_state.descriptions_provided:
-    # 显示数据预览
-    st.subheader("数据预览")
-    st.dataframe(st.session_state.df.head())
-    
-    # 创建列描述输入表单
+# --- 情况3：数据已上传/加载，但未提供列描述 ---
+elif st.session_state.get('file_uploaded') and not st.session_state.get('descriptions_provided'):
+    # 包含整个 "用户填写描述表单" 的逻辑
     st.subheader("请为每列提供描述")
-    
     with st.form("column_descriptions_form"):
-        # 为每一列创建文本输入区域
-        for col in st.session_state.df.columns:
-            # 显示列名和数据类型
-            col_type = st.session_state.df[col].dtype
-            # 创建文本区域用于输入描述
-            st.session_state.column_descriptions[col] = st.text_area(
-                f"{col} ({col_type})", 
-                st.session_state.column_descriptions.get(col, ""),
-                placeholder="请输入对该列数据的描述..."
-            )
-        
-        # 提交按钮
+        if 'column_descriptions' not in st.session_state: st.session_state.column_descriptions = {}
+        if 'df' in st.session_state and isinstance(st.session_state.df, pd.DataFrame):
+            for col in st.session_state.df.columns:
+                col_type = st.session_state.df[col].dtype
+                st.session_state.column_descriptions[col] = st.text_area(
+                    f"{col} ({col_type})", 
+                    st.session_state.column_descriptions.get(col, ""),
+                    placeholder="请输入对该列数据的描述...",
+                    key=f"desc_{col}" # Add key
+                )
+        else:
+            st.warning("无法加载数据列以提供描述。")
+            
         submit_button = st.form_submit_button("提交列描述")
-        
-        # 处理提交操作
         if submit_button:
-            st.session_state.descriptions_provided = True
-            st.session_state.chart_status = "initial_generation"  # 设置图表状态为初次生成
-            st.rerun()  # 重新运行应用以更新UI
+            try:
+                data_source_type = None
+                data_source_details = {}
+                descriptions = st.session_state.column_descriptions
+                source_type_raw = st.session_state.get('file_type')
+                if source_type_raw in ['csv', 'excel']:
+                    data_source_type = source_type_raw
+                    stored_path = st.session_state.get('file_path')
+                    if stored_path:
+                        data_source_details = {"stored_path": stored_path, "column_descriptions": descriptions}
+                    else: raise ValueError("文件路径未找到")
+                elif source_type_raw == 'mysql':
+                    data_source_type = 'mysql'
+                    conn_info = st.session_state.get('mysql_connection_info')
+                    table_name = st.session_state.get('mysql_selected_table')
+                    if conn_info and table_name:
+                        safe_conn_info = {k: v for k, v in conn_info.items() if k != 'password'}
+                        data_source_details = {"connection_info": safe_conn_info, "table_name": table_name, "column_descriptions": descriptions}
+                    else: raise ValueError("MySQL 信息未找到")
+                else: raise ValueError(f"未知数据源类型 '{source_type_raw}'")
+                update_success = update_session_data_context(current_session_id, data_source_type, data_source_details)
+                if not update_success: st.toast("警告：未能保存数据源上下文信息。", icon="⚠️")
+                else: st.toast("数据源上下文已保存。", icon="✅")
+                st.session_state.descriptions_provided = True
+                st.session_state.chart_status = "initial_generation"
+                st.rerun()
+            except Exception as e:
+                st.error(f"保存数据上下文时出错: {e}")
+                st.stop()
 
-# 当文件已上传且列描述已提供时，显示聊天界面
-if st.session_state.file_uploaded and st.session_state.descriptions_provided:
-    # 创建两列布局，调整比例为3:1，扩大左侧聊天区域
-    left_col, right_col = st.columns([3, 1])
+# --- 情况4：上下文已恢复或已完成加载和描述 -> 显示聊天界面 ---
+elif st.session_state.get('file_uploaded') and st.session_state.get('descriptions_provided') and df_loaded:
+    print("[Render Check] Entering Case 4: Chat Interface Display")
     
-    # 显示数据预览和列描述信息（可折叠）
+    # Initial Chart Generation (if needed) - NO RERUN at the end
+    if st.session_state.get('chart_status') == "initial_generation":
+        with st.spinner("正在生成初始数据可视化..."):
+            # --- 确保传递了 data_source_type --- 
+            code, image_path, result = create_chart(
+                user_id=st.session_state.user_info['username'],
+                session_id=current_session_id,
+                df=st.session_state.df,
+                column_descriptions=st.session_state.column_descriptions,
+                data_source_type=st.session_state.get('file_type'), # Pass the type
+                persistent_file_path=st.session_state.get('file_path') # Pass the path
+            )
+            if result == "图表生成成功" and code and image_path:
+                 st.session_state.visualization_code = code
+                 st.session_state.current_image = image_path
+                 st.session_state.chart_status = "generated"
+
+                 # --- 修改：先手动添加消息到 state，再存DB ---
+                 initial_message_content = "我已经基于您提供的数据生成了可视化图表。您可以通过聊天询问更多分析或修改可视化。"
+                 # 构建消息结构 (与数据库保存的 image 类型一致)
+                 initial_message = {
+                     "role": "assistant",
+                     "content_type": "image", 
+                     "content": {"path": image_path, "text": initial_message_content}, # Add text part to content
+                     "metadata": {"code": code},
+                     "_id": f"initial_{uuid.uuid4().hex}" # Fake ID for immediate display
+                 }
+                 # Ensure messages list exists
+                 if "messages" not in st.session_state or not isinstance(st.session_state.messages, list):
+                     st.session_state.messages = []
+                 st.session_state.messages.append(initial_message) # Add to state first
+
+                 # 再尝试存入数据库
+                 if current_session_id:
+                     add_success = add_message_to_session(
+                         session_id=current_session_id,
+                         username=st.session_state.user_info['username'],
+                         role="assistant",
+                         content_type="image", # Save as image type
+                         content={"path": image_path, "text": initial_message_content}, # Save path and text
+                         metadata={"code": code}
+                     )
+                     if add_success:
+                         print("[Initial Chart Gen] Initial message saved to DB successfully.")
+                     else:
+                         print("[Initial Chart Gen] Failed to save initial message to DB.")
+            else:
+                st.error(f"图表生成失败: {result}")
+                st.session_state.chart_status = "failed"
+
+    # Regenerate Chart Logic - Keep st.rerun() here
+    if st.session_state.get('should_regenerate'):
+        with st.spinner("正在重新生成图表..."):
+             # --- 修改：直接从加载的上下文获取数据类型 ---
+             # data_type = st.session_state.get('file_type') # 不再使用这个
+             loaded_context = st.session_state.get('loaded_context')
+             if loaded_context and loaded_context.get("data_source_type"):
+                 data_type = loaded_context.get("data_source_type")
+             else:
+                 # 后备方案：尝试从 session_state 获取 (如果上面失败)
+                 data_type = st.session_state.get('file_type')
+                 if not data_type:
+                     st.error("错误：无法确定重新生成图表所需的数据源类型！")
+                     success = False ; image_path = None # Set default fail state
+                     print("[Regen Check] Error: data_type is None, cannot proceed.")
+                 else:
+                     print("[Regen Check] Warning: data_type obtained from session_state as fallback.")
+
+             # 只有在 data_type 有效时才继续获取路径和代码
+             if data_type:
+                 # --- 获取 persistent_path --- 
+                 persistent_path = None # Initialize path
+                 if data_type in ['csv', 'excel']: # 只有文件类型需要路径
+                     if loaded_context and loaded_context.get("data_source_details") and loaded_context["data_source_details"].get("stored_path"):
+                         persistent_path = loaded_context["data_source_details"]["stored_path"]
+                     else:
+                         # 后备方案：尝试从 session state 获取
+                         persistent_path = st.session_state.get('file_path')
+                         if not persistent_path:
+                             st.error("错误：无法确定重新生成图表所需的数据文件路径！")
+                             success = False ; image_path = None # Set fail state
+                             print("[Regen Check] Error: persistent_path is None for file type, cannot proceed.")
+                         else:
+                             print("[Regen Check] Warning: persistent_path obtained from session_state as fallback.")
+                 # else: # 对于 mysql 等类型，persistent_path 保持 None
+
+                 print(f"[Regen Check] Determined data_type: {data_type}")
+                 print(f"[Regen Check] Determined persistent_path: {persistent_path}") # Log the path
+
+                 # 获取要运行的代码
+                 code_to_run = st.session_state.get('visualization_code')
+
+                 # 只有在路径有效(或不需要) 且 代码存在 时才执行
+                 path_ok = (data_type not in ['csv', 'excel']) or persistent_path
+                 if path_ok and code_to_run:
+                     print(f"[Regen Check] Path OK, proceeding to execute code: {code_to_run[:100]}...") # Log before exec
+                     success, image_path = execute_code(
+                         code_to_run, 
+                         user_id=st.session_state.user_info['username'], # user_id 在外部已获取和检查
+                         session_id=current_session_id, 
+                         data_source_type=data_type,
+                         persistent_file_path=persistent_path # 使用新获取的 path
+                     )
+                     print(f"[Regen Check] Execute code result: {success}, image_path: {image_path}")
+                     if success:
+                         st.session_state.current_image = image_path
+                         st.session_state.chart_status = "generated"
+                         regenerated_message_content = "我已经根据您的要求重新生成了可视化图表："
+                         regen_message = {"role": "assistant","content_type": "image","content": {"path": image_path, "text": regenerated_message_content},"metadata": {"code": code_to_run}}
+                         if "messages" not in st.session_state: st.session_state.messages = []
+                         st.session_state.messages.append(regen_message) # Append first
+                         add_message_to_session(session_id=current_session_id, username=st.session_state.user_info['username'], role="assistant", content_type="image", content=regen_message["content"], metadata=regen_message["metadata"])
+                     else: 
+                         # execute_code 内部应该已经打印了错误，这里可以只标记失败
+                         st.error("图表生成失败，请查看终端日志获取详细信息。")
+                         st.session_state.chart_status = "failed"
+                 elif not path_ok:
+                     # 如果是因为路径问题失败，这里无需再显示错误，上面已经显示过了
+                     st.session_state.chart_status = "failed" # Mark as failed
+                 else: # code_to_run is None
+                     st.error("没有可用于重新生成的代码。")
+                     st.session_state.chart_status = "failed" # Mark as failed
+             # else: # 如果 data_type 获取失败，上面已经处理了错误
+             
+             # 重置标志位 (无论成功与否都应重置)
+             st.session_state.should_regenerate = False
+
+    # --- Chat Interface Layout --- 
+    left_col, right_col = st.columns([3, 1])
     with st.expander("数据信息", expanded=False):
         st.subheader("数据预览")
-        st.dataframe(st.session_state.df.head())
-        
+        if 'df' in st.session_state and isinstance(st.session_state.df, pd.DataFrame):
+            st.dataframe(st.session_state.df.head())
+        else:
+            st.warning("数据尚未加载或加载失败。")
         st.subheader("列描述")
-        for col, desc in st.session_state.column_descriptions.items():
-            st.write(f"**{col}**: {desc}")
-    
-    # 初次生成可视化图表
-    if st.session_state.chart_status == "initial_generation":
-        with st.spinner("正在生成数据可视化..."):
-            # 首次生成可视化，使用create_chart
-            code, image_path, result = create_chart(
-                df=st.session_state.df,
-                column_descriptions=st.session_state.column_descriptions
-            )
-            # 更新图表状态和代码
-            if result == "图表生成成功":
-                st.session_state.visualization_code = code
-                st.session_state.current_image = image_path
-                st.session_state.chart_status = "generated"
-                # 添加系统消息到对话历史
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": "我已经基于您提供的数据生成了可视化图表。您可以通过聊天询问更多分析或修改可视化。",
-                    "image": st.session_state.current_image
-                })
-            st.rerun()  # 更新UI展示结果
-    
-    # 如果需要重新生成图表（用户点击了"重新生成图表"按钮）
-    if st.session_state.should_regenerate:
-        with st.spinner("正在重新生成图表..."):
-            # 使用当前可视化代码重新生成图表
-            success, image_path = execute_code(st.session_state.visualization_code)
-            
-            if success:
-                st.session_state.current_image = image_path
-                st.session_state.should_regenerate = False
-                st.session_state.chart_status = "generated"
-                # 添加新的图表到聊天历史
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": "我已经根据代码重新生成了可视化图表：",
-                    "image": st.session_state.current_image
-                })
-                st.rerun()
-            else:
-                st.error("图表生成失败")
-                st.session_state.should_regenerate = False
+        if 'column_descriptions' in st.session_state and st.session_state.column_descriptions:
+            for col, desc in st.session_state.column_descriptions.items():
+                st.write(f"**{col}**: {desc if desc else '-'}")
+        else:
+            st.write("无列描述信息。")
     
     with left_col:
-        # 创建一个固定高度的聊天容器
         chat_container = st.container(height=600)
-        
-        # 在聊天容器中显示所有消息
         with chat_container:
-            for message in st.session_state.messages:
-                with st.chat_message(message["role"]):
-                    # 处理带有代码块的消息
-                    content = message["content"]
-                    if "```python" in content and message["role"] == "assistant":
-                        # 分割内容，提取代码块前的文本
-                        parts = content.split("```python")
-                        st.write(parts[0])
-                        
-                        # 遍历所有代码块
-                        for i, part in enumerate(parts[1:]):
-                            if "```" in part:
-                                code_part, text_part = part.split("```", 1)
-                                # 显示代码块
-                                st.code(code_part.strip(), language="python")
-                                # 添加"应用代码"按钮，使用消息在历史记录中的索引和代码块的索引来确保key的唯一性
-                                button_key = f"apply_code_{st.session_state.messages.index(message)}_{i}_{len(code_part)}"
-                                if st.button("应用此代码", key=button_key):
-                                    st.session_state.visualization_code = code_part.strip()
-                                    st.rerun()
-                                # 显示代码块后的文本
-                                st.write(text_part)
+            if isinstance(st.session_state.get("messages"), list) and st.session_state.messages:
+                # --- 添加日志：打印最后一条消息，确认内容 --- 
+                print(f"[Chat Display] Content of last message before loop: {st.session_state.messages[-1].get('content')}")
+                # ---------------------------------------- 
+                try: # Add try-except around path logic
+                    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+                    src_root = os.path.join(project_root, "src")
+                except NameError: src_root = os.path.abspath("./src"); print("Warning: __file__ not found...")
+
+                for message_index, message in enumerate(st.session_state.messages): # Add index
+                    with st.chat_message(message["role"]):
+                        content_type = message.get('content_type', 'text')
+                        content = message.get('content')
+                        metadata = message.get('metadata', {})
+                        message_id = message.get('_id', uuid.uuid4().hex)
+                        role = message.get('role') # Get role
+
+                        print(f"[Display Loop {message_index}] Role: {role}, Type: {content_type}, Content Start: {str(content)[:50]}...") # Log each message start
+
+                        if content_type == 'text' and isinstance(content, str):
+                            is_assistant = (role == "assistant")
+                            # --- 修改：使用 Regex 查找代码块 --- 
+                            code_block_pattern = r"```(?:python|py)?\s*\n?(.*?)\s*\n?```"
+                            match = re.search(code_block_pattern, content, re.DOTALL)
+
+                            print(f"  [Check Code Block] Is Assistant: {is_assistant}, Regex Match: {'Found' if match else 'None'}")
+                            # --------------------------------------- 
+                            if is_assistant and match: # If it's an assistant message AND regex found a block
+                                print(f"  [Code Block Found via Regex] Trying to parse content.")
+                                try:
+                                    # Extract text before, code, and text after
+                                    text_before = content[:match.start()].strip()
+                                    display_code = match.group(1).strip() # Extract code from group 1
+                                    text_after = content[match.end():].strip()
+
+                                    # Display parts
+                                    if text_before: st.write(text_before)
+                                    print(f"  [Code Parsed] Extracted Code Length: {len(display_code)}")
+                                    if display_code:
+                                        st.code(display_code, language="python")
+                                        button_key = f"apply_code_{message_id}_{message_index}" # Use index too for uniqueness
+                                        st.button(
+                                            "应用此代码",
+                                            key=button_key,
+                                            on_click=apply_code_callback,
+                                            args=(display_code,)
+                                        )
+                                    else: print("  [Code Parsed Warning] Extracted code was empty.")
+                                    if text_after: st.write(text_after)
+
+                                except Exception as parse_e:
+                                     print(f"  [Code Parse Error] Error parsing regex-found code block: {parse_e}")
+                                     st.write(content) # Fallback to showing raw content on error
                             else:
-                                # 如果没有结束标记，显示整个部分
-                                st.code(part.strip(), language="python")
-                    else:
-                        # 常规消息直接显示
-                        st.write(content)
-                    
-                    # 显示图片（如果有）
-                    if "image" in message:
-                        # 读取SVG文件内容
-                        with open(message["image"], 'r', encoding='utf-8') as f:
-                            svg_content = f.read()
-                        
-                        # 准备用于放大缩小的SVG内容
-                        if "svg_scale" not in st.session_state:
-                            st.session_state.svg_scale = {}
-                        
-                        # 为当前图表初始化缩放比例（如果不存在）
-                        if message["image"] not in st.session_state.svg_scale:
-                            st.session_state.svg_scale[message["image"]] = 1.0
-                        
-                        # 修改SVG内容，添加缩放比例
-                        if '<svg ' in svg_content:
-                            # 从SVG内容中提取宽度和高度
-                            import re
-                            width_match = re.search(r'width="([^"]*)"', svg_content)
-                            height_match = re.search(r'height="([^"]*)"', svg_content)
-                            
-                            original_width = width_match.group(1) if width_match else "600"
-                            original_height = height_match.group(1) if height_match else "400"
-                            
-                            # 移除单位，只保留数值部分
-                            original_width = re.sub(r'[^0-9.]', '', original_width)
-                            original_height = re.sub(r'[^0-9.]', '', original_height)
-                            
-                            # 计算缩放后的尺寸
-                            scaled_width = float(original_width) * st.session_state.svg_scale[message["image"]]
-                            scaled_height = float(original_height) * st.session_state.svg_scale[message["image"]]
-                            
-                            # 替换SVG中的宽度和高度
-                            svg_content = re.sub(r'width="[^"]*"', f'width="{scaled_width}px"', svg_content)
-                            svg_content = re.sub(r'height="[^"]*"', f'height="{scaled_height}px"', svg_content)
-                        
-                        # 直接显示SVG图表
-                        st.markdown(svg_content, unsafe_allow_html=True)
-                        
-                        # 添加图表操作按钮
-                        cols = st.columns(3)
-                        with cols[0]:
-                            if st.button("放大", key=f"zoom_in_{message['image']}"):
-                                # 放大SVG图表（增加缩放比例）
-                                st.session_state.svg_scale[message["image"]] *= 1.2
-                                st.rerun()
-                        with cols[1]:
-                            if st.button("缩小", key=f"zoom_out_{message['image']}"):
-                                # 缩小SVG图表（减小缩放比例）
-                                st.session_state.svg_scale[message["image"]] *= 0.8
-                                st.rerun()
-                        with cols[2]:
-                            # 提供下载链接
-                            download_path = message["image"]
-                            with open(download_path, "rb") as file:
-                                btn = st.download_button(
-                                    label="下载图表",
-                                    data=file,
-                                    file_name="chart.svg",
-                                    mime="image/svg+xml",
-                                    key=f"download_{message['image']}"
-                                )
+                                # Display as normal text if not assistant or no code block found by regex
+                                st.write(content)
+                        elif content_type == 'image':
+                            image_path_relative = content.get('path') if isinstance(content, dict) else None
+                            associated_text = content.get('text') if isinstance(content, dict) else None
+                            code_str = metadata.get('code') if isinstance(metadata, dict) else None
+
+                            if associated_text:
+                                st.write(associated_text)
+
+                            if image_path_relative:
+                                try:
+                                    # --- 修改：构建完整路径进行检查和打开 ---
+                                    full_image_path = os.path.join(src_root, image_path_relative)
+                                    print(f"[Image Display] Checking for image at: {full_image_path}") # DEBUG Log
+                                    if os.path.exists(full_image_path):
+                                        with open(full_image_path, 'r', encoding='utf-8') as f:
+                                            svg_content = f.read()
+                                        if "svg_scale" not in st.session_state: st.session_state.svg_scale = {}
+                                        if full_image_path not in st.session_state.svg_scale: st.session_state.svg_scale[full_image_path] = 1.0 # Use full path as key?
+                                        if '<svg ' in svg_content:
+                                            w_match = re.search(r'width="([^"]*)"', svg_content)
+                                            h_match = re.search(r'height="([^"]*)"', svg_content)
+                                            o_w = w_match.group(1) if w_match else "600"
+                                            o_h = h_match.group(1) if h_match else "400"
+                                            o_w = re.sub(r'[^0-9.]', '', o_w)
+                                            o_h = re.sub(r'[^0-9.]', '', o_h)
+                                            try:
+                                                scale = st.session_state.svg_scale[full_image_path]
+                                                s_w = float(o_w)*scale
+                                                s_h = float(o_h)*scale
+                                                svg_content = re.sub(r'width="[^"]*"', f'width="{s_w}px"', svg_content)
+                                                svg_content = re.sub(r'height="[^"]*"', f'height="{s_h}px"', svg_content)
+                                            except ValueError:
+                                                pass
+                                        st.markdown(svg_content, unsafe_allow_html=True)
+
+                                        cols = st.columns(3)
+                                        with cols[0]:
+                                            if st.button("+", key=f"zoom_in_{message_id}"):
+                                                st.session_state.svg_scale[full_image_path] *= 1.2; st.rerun()
+                                        with cols[1]:
+                                            if st.button("-", key=f"zoom_out_{message_id}"):
+                                                st.session_state.svg_scale[full_image_path] *= 0.8; st.rerun()
+                                        with cols[2]:
+                                            with open(full_image_path, "rb") as file: # Use full path here
+                                                btn = st.download_button(label="down", data=file, file_name=f"chart_{message_id}.svg", mime="image/svg+xml", key=f"download_{message_id}")
+                                    else:
+                                        st.warning(f"图表文件未找到: {full_image_path} (Relative path: {image_path_relative})")
+                                except Exception as e:
+                                    st.error(f"显示图表时出错: {e}")
+                        elif content_type == 'file_upload':
+                            if isinstance(content, dict):
+                                st.info(f"文件上传: {content.get('original_filename', '?')}")
+                            else:
+                                st.info("文件上传记录")
+                        else:
+                            st.write(f"未知消息类型 '{content_type}': {content}")
+            else:
+                st.info("开始您的分析对话吧！")
+
+            if st.session_state.get('is_thinking'):
+                with st.chat_message("assistant"): st.write("正在思考...")
             
-            # 如果AI正在思考，显示思考状态
-            if st.session_state.is_thinking:
-                with st.chat_message("assistant"):
-                    st.write("正在思考...")
-            
-            # 如果需要AI响应
-            if st.session_state.need_ai_response:
-                # 获取AI助手回复
-                data_context = {
-                    "数据预览": st.session_state.df.head().to_string(),
-                    "数据描述": st.session_state.df.describe().to_string(),
-                    "列描述": st.session_state.column_descriptions,
-                    "当前代码": st.session_state.visualization_code
-                }
+            # 对话
+            if st.session_state.get('need_ai_response'):
+                # --- 修改：构建新的 data_context 和 history --- 
                 
-                # 创建空容器用于流式输出
+                # 1. 构建 data_context (检查这部分)
+                data_context = {
+                    "column_descriptions": st.session_state.get('column_descriptions', {}),
+                    "current_code": st.session_state.get('visualization_code')
+                }
+                loaded_context_details = st.session_state.get('loaded_context')
+                if loaded_context_details:
+                    data_context["data_source_type"] = loaded_context_details.get("data_source_type")
+                    data_context["data_source_details"] = loaded_context_details.get("data_source_details")
+                    # 如果 loaded_context 中有更权威的 descriptions，应该覆盖 session_state 中的
+                    if loaded_context_details.get("data_source_details", {}).get("column_descriptions"):
+                        data_context["column_descriptions"] = loaded_context_details["data_source_details"]["column_descriptions"]
+                        print("[AI Context Check] Using column descriptions loaded from session context.") # Add log
+                    else:
+                        print("[AI Context Check] Using column descriptions from current session state (if any).") # Add log
+                else:
+                    data_context["data_source_type"] = st.session_state.get('file_type')
+                    if data_context["data_source_type"] in ['csv', 'excel']:
+                        data_context["data_source_details"] = {"stored_path": st.session_state.get('file_path')}
+                    elif data_context["data_source_type"] == 'mysql':
+                         data_context["data_source_details"] = {
+                             "connection_info": st.session_state.get('mysql_connection_info'),
+                             "table_name": st.session_state.get('mysql_selected_table')
+                         }
+                    print("Warning: Using possibly incomplete data context from session state as loaded_context was missing.")
+
+                # 2. 构建 history
+                chat_history_for_llm = []
+                if isinstance(st.session_state.get("messages"), list):
+                    for msg in st.session_state.messages:
+                        role = msg.get('role'); content_type = msg.get('content_type', 'text'); content = msg.get('content')
+                        text_content = None
+                        if content_type == 'text' and isinstance(content, str): text_content = content
+                        elif content_type == 'image' and isinstance(content, dict) and content.get('text'): text_content = content['text']
+                        elif content_type == 'file_upload' and isinstance(content, dict): text_content = f"[用户上传了文件: {content.get('original_filename', '?')}]"
+                        if role and text_content: chat_history_for_llm.append({"role": role, "content": text_content})
+                
+                print(f"[AI Request] History length: {len(chat_history_for_llm)}")
+                print(f"[AI Request] Data Context: {data_context}")
+
+                # 3. 调用流式响应函数 (传递 history)
                 with st.chat_message("assistant"):
                     message_placeholder = st.empty()
-                    
-                    # 使用流式响应
-                    response = get_streaming_response(
-                        user_message=st.session_state.current_input,
-                        data_context=data_context,
-                        message_placeholder=message_placeholder
-                    )
-                    
-                    # 存储响应到session state
-                    st.session_state.temp_response = response
+                    response = None
+                    print("[AI Response] Calling get_streaming_response...")
+                    try:
+                        response = get_streaming_response(
+                            user_message=st.session_state.current_input,
+                            data_context=data_context,
+                            history=chat_history_for_llm,
+                            message_placeholder=message_placeholder
+                        )
+                        # --- 新增：在 try 块内部用最终 response 更新占位符 --- 
+                        if response:
+                            message_placeholder.markdown(response) 
+                        else: 
+                            message_placeholder.empty()
+                        print(f"[AI Response] get_streaming_response returned: {'Exists' if response else 'None'}")
+                    except Exception as stream_e:
+                        print(f"[AI Response] Error during get_streaming_response: {stream_e}")
+                        st.error(f"获取AI响应时出错: {stream_e}")
+                        response = None
+                        message_placeholder.empty()
                 
-                # 添加助手回复到历史记录
-                st.session_state.messages.append({"role": "assistant", "content": st.session_state.temp_response})
-                
-                # 重置标记
+                # --- 新增：处理最终响应 (保存到 state 和 DB) --- 
+                if response:
+                    ai_message = {
+                        "role": "assistant",
+                        "content_type": "text",
+                        "content": response,
+                    }
+                    if "messages" not in st.session_state or not isinstance(st.session_state.messages, list):
+                        st.session_state.messages = []
+                    st.session_state.messages.append(ai_message)
+                    print("[AI Response] Appended final response to session_state.messages.")
+
+                    # 保存到数据库
+                    if current_session_id:
+                        # 获取 user_id (再次确保存在)
+                        user_id_for_save = st.session_state.user_info.get('username')
+                        if user_id_for_save:
+                            add_success = add_message_to_session(
+                                session_id=current_session_id,
+                                username=user_id_for_save,
+                                role="assistant",
+                                content_type="text",
+                                content=response
+                            )
+                            if add_success:
+                                print("[AI Response] Final response saved to DB successfully.")
+                            else:
+                                print("[AI Response] Failed to save final response to DB.")
+                        else:
+                             print("[AI Response] Error: Cannot save message, username not found.")
+                    else:
+                        print("错误：无法保存AI消息，缺少 current_session_id")
+                else:
+                    print("[AI Response] No valid response received, skipping state update and DB save.")
+
+                # 重置标记 & Rerun (保持不变)
                 st.session_state.need_ai_response = False
                 st.session_state.current_input = ""
                 st.session_state.is_thinking = False
-                st.session_state.temp_response = ""
-                
-                # 重新运行应用以更新UI并避免重复添加消息
                 st.rerun()
-        
-        # 在聊天容器下方添加一个表单，确保只有在提交时才处理输入
+
         with st.form(key="chat_form", clear_on_submit=True):
             user_input = st.text_input("请输入您的问题", key="temp_input")
             submit_button = st.form_submit_button("发送")
-            
-            # 当表单提交时处理输入
             if submit_button and user_input:
-                # 添加用户消息到历史记录
-                st.session_state.messages.append({"role": "user", "content": user_input})
-                # 添加一个标记，表示需要处理AI响应
+                # 1. 立即显示用户消息
+                with chat_container: # 确保在聊天容器内显示
+                     with st.chat_message("user"):
+                         st.write(user_input)
+
+                # 2. 立即将用户消息添加到 session_state
+                user_message_struct = {
+                    "role": "user",
+                    "content_type": "text",
+                    "content": user_input,
+                    "_id": f"user_{uuid.uuid4().hex}" # 临时ID用于显示
+                }
+                # 确保 messages 列表存在
+                if "messages" not in st.session_state or not isinstance(st.session_state.messages, list):
+                    st.session_state.messages = []
+                st.session_state.messages.append(user_message_struct)
+
+                # 3. 立即将用户消息存入数据库
+                user_id_for_save = st.session_state.user_info.get('username')
+                if current_session_id and user_id_for_save:
+                    add_success = add_message_to_session(
+                        session_id=current_session_id,
+                        username=user_id_for_save,
+                        role="user",
+                        content_type="text",
+                        content=user_input
+                    )
+                    if not add_success:
+                        st.toast("警告：未能保存您的消息到数据库。", icon="⚠️")
+                    else:
+                        print("[User Input] User message saved to DB successfully.")
+                else:
+                    st.toast("错误：无法保存您的消息，缺少会话或用户信息。", icon="🚨")
+
+                # 4. 设置状态以触发 AI 响应
                 st.session_state.need_ai_response = True
-                # 存储当前用户输入供AI使用
-                st.session_state.current_input = user_input
-                # 设置思考状态
+                st.session_state.current_input = user_input # 仍然需要这个给 get_streaming_response
                 st.session_state.is_thinking = True
-                # 重新运行应用以更新UI
+
+                # 5. Rerun 以处理 AI 响应
                 st.rerun()
-    
+
     with right_col:
-        # 创建可折叠的可视化画布，类似浮窗
         with st.expander("可视化代码", expanded=True):
-            if st.session_state.visualization_code:
-                st.code(st.session_state.visualization_code, language="python")
-                
+            viz_code = st.session_state.get('visualization_code')
+            if viz_code:
+                # 使用时间戳作为唯一key，确保每次rerun时都重新渲染
+                st.code(viz_code, language="python")
                 col1, col2 = st.columns(2)
-                # 添加代码复制按钮
                 with col1:
                     if st.button("复制代码"):
-                        st.write("代码已复制到剪贴板")
-                
-                # 添加重新生成图表按钮
+                        st.toast("请手动复制上面的代码。")
                 with col2:
                     if st.button("重新生成图表"):
                         st.session_state.should_regenerate = True
                         st.rerun()
+            else:
+                st.info("暂无可视化代码。")
 
-# 在页面底部添加清理代码，确保MySQL连接被正确关闭
-if st.session_state.mysql_connection:
+# --- 页面底部清理代码 --- 
+if st.session_state.get("mysql_connection"):
     close_mysql_connection(st.session_state.mysql_connection)
     st.session_state.mysql_connection = None 
+
