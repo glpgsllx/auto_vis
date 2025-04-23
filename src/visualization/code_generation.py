@@ -300,7 +300,7 @@ def create_chart(user_id: str, session_id: str, column_descriptions, data_source
 
         # --- 修改：调用 execute_code 时传递 data_source_type 和 persistent_file_path --- 
         print(f"[create_chart] Generated code, attempting execution with type: {data_source_type}, path: {persistent_file_path}")
-        success, image_path = execute_code(
+        success, image_path, output_text = execute_code(
             code,
             user_id=user_id, 
             session_id=session_id,
@@ -311,7 +311,7 @@ def create_chart(user_id: str, session_id: str, column_descriptions, data_source
         if success:
             return code, image_path, "图表生成成功"
         else:
-             return code, None, "图表生成失败 (代码执行出错)"
+             return code, None, f"图表生成失败 (代码执行出错): {output_text}"
 
     except Exception as e:
         import traceback

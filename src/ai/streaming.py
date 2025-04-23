@@ -140,14 +140,25 @@ def get_streaming_response(user_message, data_context, history: list = None, mes
 {current_code}
 
 --- 代码生成规则 ---
-{load_instruction} # Add the specific loading instruction here
+{load_instruction}
 
-1. 请根据数据和用户需求生成合适的 Python 代码进行可视化。
-2. **必须** 使用 matplotlib 进行绘图，**禁止** 使用 seaborn、plotly 或其他可视化库。
-3. 确保代码能独立运行（包含必要的 import）。
-4. **务必** 将最终生成的图表保存为 'answer.svg'。
+1. 请根据用户需求判断并生成合适的Python代码:
 
-请记住：读取数据时使用指定的占位符（如果是文件）或指定的数据库连接/查询（如果是MySQL），并将图表保存为 'answer.svg'。
+   A. 如果用户需要数据可视化（图表、图形等）:
+      - 使用matplotlib进行绘图
+      - 确保代码能独立运行（包含必要的import）
+      - 务必将最终生成的图表保存为'answer.svg'
+      - 不要使用seaborn、plotly或其他可视化库
+
+   B. 如果用户需要数据分析或计算（如均值、总和、排序等统计分析）:
+      - 生成简洁的计算代码
+      - 使用print()函数打印结果，格式清晰易读
+      - 不要包含图表生成或保存代码
+      - 确保输出结果便于阅读和理解
+
+请记住：读取数据时使用指定的占位符（如果是文件）或指定的数据库连接/查询（如果是MySQL）。
+
+请不要生成额外的解释！！！
 """.format(current_code=data_context.get('current_code', '(无)'), load_instruction=load_instruction)
 
     # 构建包含历史记录的消息列表
@@ -187,6 +198,85 @@ def get_streaming_response(user_message, data_context, history: list = None, mes
             print(f"Error during non-streaming generation: {e}")
             try:
                 st.error(f"生成回复时出错: {e}")
+            except Exception:
+                pass
+            return None
+    
+    return full_reply 
+
+def process_analysis_streaming(output_text, user_query, data_context=None, message_placeholder=None):
+    """处理分析结果并提供流式解释
+    
+    Args:
+        output_text (str): 代码执行的输出文本
+        user_query (str): 用户的原始查询
+        data_context (dict, optional): 数据上下文信息
+        message_placeholder (streamlit.empty, optional): 用于显示流式输出的占位符
+        
+    Returns:
+        str: 对分析结果的专业解释
+    """
+    # 构建系统消息
+    system_message = """你是一个专业的数据分析师。你的任务是解释分析代码的执行结果，并将其转化为用户易于理解的内容。
+请确保解释准确、专业，同时简洁明了。不要简单重复数字，而是提供有价值的见解和解释。"""
+    
+    # 初始化上下文描述
+    context_desc = ""
+    if data_context:
+        ds_type = data_context.get("data_source_type")
+        if ds_type:
+            context_desc += f"\n\n数据来源: {ds_type}\n"
+        
+        if data_context.get('column_descriptions'):
+            context_desc += "\n列描述信息:\n"
+            for col, desc in data_context.get('column_descriptions', {}).items():
+                if desc:
+                    context_desc += f"- {col}: {desc}\n"
+    
+    # 构建完整提示
+    prompt = f"""基于以下代码执行结果，对用户的问题"{user_query}"进行专业解释：
+
+执行结果:
+```
+{output_text}
+```
+{context_desc}
+
+请提供简洁、专业的解释，帮助用户理解这些结果的意义。专注于重要的发现和洞见，而不是简单重复数字。
+"""
+    
+    # 构建消息列表
+    messages = [
+        {"role": "system", "content": system_message},
+        {"role": "user", "content": prompt}
+    ]
+    
+    # 初始化模型
+    llm = StreamingLLM()
+    
+    # 创建一个空的回复字符串
+    full_reply = ""
+    
+    # 处理流式响应
+    if message_placeholder:
+        try:
+            for chunk in llm.generate_response(messages):
+                full_reply += chunk
+                message_placeholder.markdown(full_reply)
+        except Exception as e:
+            print(f"Error during analysis streaming generation: {e}")
+            try:
+                message_placeholder.error(f"生成分析解释时出错: {e}")
+            except Exception:
+                pass
+            return None
+    else:
+        try:
+            full_reply = llm.generate_response(messages, stream=False)
+        except Exception as e:
+            print(f"Error during analysis non-streaming generation: {e}")
+            try:
+                st.error(f"生成分析解释时出错: {e}")
             except Exception:
                 pass
             return None

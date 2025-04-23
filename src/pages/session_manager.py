@@ -62,13 +62,13 @@ sessions = get_sessions_by_user(user_id=user_id)
 if not sessions:
     st.info("您还没有历史会话记录。")
 else:
-    cols_per_row = 3
-    cols = st.columns(cols_per_row)
     for i, session in enumerate(sessions):
-        col_index = i % cols_per_row
-        with cols[col_index]:
-            with st.container(border=True):
-                session_name = session.get('session_name', '未命名会话') # Provide default
+        with st.container(border=True):
+            session_name = session.get('session_name', '未命名会话') # Provide default
+            
+            col_info, col_buttons = st.columns([0.7, 0.3])
+            
+            with col_info:
                 st.subheader(f"📜 {session_name}")
                 last_updated_at = session.get('last_updated_at')
                 if last_updated_at:
@@ -77,15 +77,13 @@ else:
                     last_updated_str = "未知时间"
                 st.caption(f"最后更新: {last_updated_str}")
 
+            with col_buttons:
                 button_col1, button_col2 = st.columns(2)
-
                 with button_col1:
                     enter_button_key = f"session_{session['_id']}"
                     if st.button("进入", key=enter_button_key, use_container_width=True):
-                        # 设置当前会话ID
                         st.session_state.current_session_id = session['_id']
                         st.session_state.current_session_name = session['session_name']
-                        # 清理可能存在的旧会话状态
                         keys_to_reset = ['messages', 'df', 'file_uploaded', 'column_descriptions',
                                          'descriptions_provided', 'visualization_code', 'chart_status',
                                          'file_path', 'current_image', 'file_type', 'mysql_step', 'loaded_context']
@@ -95,11 +93,9 @@ else:
                         st.switch_page("pages/data_analysis.py")
 
                 with button_col2:
-                    delete_button_key = f"delete_popover_{session['_id']}"
                     delete_confirm_key = f"delete_confirm_{session['_id']}"
-                    delete_button_placeholder = st.empty()
                     
-                    with st.popover(label="删除确认"):
+                    with st.popover(label="删除", help="删除此会话"):
                         session_name_for_confirm = session.get('session_name', '此未命名')
                         st.markdown(f"确定要删除会话 **'{session_name_for_confirm}'** 吗？此操作无法撤销。")
                         if st.button("确认删除", key=delete_confirm_key, type="primary"):
@@ -111,6 +107,5 @@ else:
                                     st.rerun()
                                 else:
                                     st.toast(f"删除会话 '{session['session_name']}' 失败。", icon="🚨")
-                                
-                    with delete_button_placeholder:
-                        st.button("删除", key=delete_button_key, type="secondary", use_container_width=True) 
+
+            st.markdown("<br>", unsafe_allow_html=True) 

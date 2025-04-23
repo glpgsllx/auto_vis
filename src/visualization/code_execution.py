@@ -15,7 +15,7 @@ executor = LocalCommandLineCodeExecutor(
 )
 
 def execute_code(code, user_id: str, session_id: str, data_source_type: str, persistent_file_path: str | None = None, image_id=None):
-    """执行代码并生成图片的通用函数
+    """执行代码并生成图片或返回分析结果的通用函数
 
     Args:
         code (str): 要执行的Python代码字符串 (可能包含占位符如 'data.csv')
@@ -26,16 +26,16 @@ def execute_code(code, user_id: str, session_id: str, data_source_type: str, per
         image_id (str, optional): 图片的唯一ID
 
     Returns:
-        tuple: (是否成功, 图片相对路径 | None)
+        tuple: (是否成功, 图片相对路径 | None, 文本输出)
     """
     print(f"[Execute Code] Data source type: {data_source_type}")
     if not user_id or not session_id:
         print("错误: execute_code 需要 user_id 和 session_id。")
-        return False, None
+        return False, None, "错误: 缺少用户ID或会话ID。"
     # --- 新增：检查文件类型参数 --- 
     if data_source_type in ['csv', 'excel'] and not persistent_file_path:
          print(f"错误: 文件类型({data_source_type}) 需要 persistent_file_path。")
-         return False, None
+         return False, None, f"错误: 文件类型({data_source_type}) 需要 persistent_file_path。"
 
     try: # --- Main Try Block Starts Here ---
         # --- 1. 构建目标图表路径 (不变) ---
@@ -174,15 +174,6 @@ plt.rcParams['svg.fonttype'] = 'none'  # 确保字体被正确嵌入到SVG中
         print("-" * 50)
 
         # --- 7. 执行代码 (使用设定好工作目录的 executor) ---
-        # --- 修改：使用 CodeBlock 对象 --- 
-        # code_executor_agent = ConversableAgent(
-        #     "code_executor_agent",
-        #     llm_config=False,
-        #     code_execution_config={"executor": executor},
-        #     human_input_mode="NEVER",
-        # )
-        # code_block = f"```python\n{modified_code}\n```" # Old string format
-        # execution_result = executor.execute_code_blocks([code_block]) # Old call
         
         # 创建 CodeBlock 对象
         code_block_obj = CodeBlock(code=modified_code, language="python")
@@ -198,32 +189,32 @@ plt.rcParams['svg.fonttype'] = 'none'  # 确保字体被正确嵌入到SVG中
             if os.path.exists(target_file_full_path):
                 print(f"图表成功生成于: {target_file_full_path}")
                 # 返回相对于 src 目录的路径
-                return True, os.path.join(target_dir_relative_to_src, chart_filename).replace(os.sep, '/')
+                return True, os.path.join(target_dir_relative_to_src, chart_filename).replace(os.sep, '/'), execution_result.output
             else:
                 print(f"代码执行成功，但目标文件未找到: {target_file_full_path}")
-                print(f"请检查代码中的保存路径是否正确设置为: {relative_chart_save_path_for_code}")
-                return False, None
+                print(f"这可能是分析计算代码而非可视化代码，返回执行结果")
+                return True, None, execution_result.output
         else:
             print(f"代码执行失败 (退出码: {execution_result.exit_code})。输出:\n{execution_result.output}")
-            return False, None
+            return False, None, execution_result.output
 
     except Exception as e:
-        print(f"执行代码时发生严重错误：{str(e)}\n{traceback.format_exc()}")
-        return False, None
+        error_msg = f"执行代码时发生严重错误：{str(e)}\n{traceback.format_exc()}"
+        print(error_msg)
+        return False, None, error_msg
 
-# --- 修改：regenerate_chart 也需要传递数据源信息 ---
 def regenerate_chart(code, user_id: str, session_id: str, data_source_type: str, persistent_file_path: str | None = None):
-    """重新生成图表
+    """重新生成图表或执行分析代码
 
     Args:
-        code (str): 可视化代码
+        code (str): 可视化或分析代码
         user_id (str): 当前用户的ID
         session_id (str): 当前会话的ID
         data_source_type (str): 数据源类型
         persistent_file_path (str | None): 持久化文件路径 (如果类型是文件)
 
     Returns:
-        tuple: (是否成功, 图片相对路径 | None)
+        tuple: (是否成功, 图片相对路径 | None, 文本输出)
     """
     image_id = uuid.uuid4().hex
     return execute_code(code, user_id, session_id, data_source_type, persistent_file_path, image_id) 

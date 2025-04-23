@@ -8,11 +8,10 @@ import time
 from src.auth.auth import is_logged_in, update_settings
 from src.utils.data_processing import load_data_file, process_data, infer_column_descriptions
 from src.visualization.code_generation import create_chart
-from src.ai.llm_agent import get_response
 from src.web_utils.ui_elements import display_sidebar_user_info, display_error, display_success, display_code, display_dataframe_info
 from src.database.mysql import connect_mysql, get_mysql_tables, get_mysql_table_data, close_mysql_connection
 from src.visualization.code_execution import execute_code
-from src.ai.streaming import get_streaming_response
+from src.ai.streaming import get_streaming_response, process_analysis_streaming
 from src.database.chat_history_db import add_message_to_session, get_messages_by_session, update_session_name, get_session_details, update_session_data_context
 from bson import ObjectId
 import functools # Import functools for partial if needed, or use args/kwargs directly
@@ -28,10 +27,20 @@ def apply_code_callback(code_to_apply):
     if code_to_apply:
         print("调用回调函数！！！")
         print(f"[Apply Code Callback] Applying code:\n---\n{code_to_apply}\n---")
+        
+        # 检查代码是分析型还是可视化型
+        is_visualization_code = "savefig" in code_to_apply or "plt.save" in code_to_apply
+        
         st.session_state.visualization_code = code_to_apply
         st.session_state.chart_status = "applied" # Set status directly
+        st.session_state.code_just_applied = True # Flag to avoid context reload
+        
         print(f"[Apply Code Callback] visualization_code and chart_status updated.")
-        st.toast("代码已应用到右侧面板！")
+        
+        if is_visualization_code:
+            st.toast("可视化代码已应用到右侧面板！点击'重新生成图表'执行。", icon="📊")
+        else:
+            st.toast("分析代码已应用到右侧面板！点击'执行代码'查看结果。", icon="🔍")
     else:
         print("[Apply Code Callback] Error: Code to apply is empty.")
         st.toast("错误：无法应用空代码。", icon="🚨")
@@ -815,83 +824,6 @@ elif st.session_state.get('file_uploaded') and st.session_state.get('description
                 st.error(f"图表生成失败: {result}")
                 st.session_state.chart_status = "failed"
 
-    # Regenerate Chart Logic - Keep st.rerun() here
-    if st.session_state.get('should_regenerate'):
-        with st.spinner("正在重新生成图表..."):
-             # --- 修改：直接从加载的上下文获取数据类型 ---
-             # data_type = st.session_state.get('file_type') # 不再使用这个
-             loaded_context = st.session_state.get('loaded_context')
-             if loaded_context and loaded_context.get("data_source_type"):
-                 data_type = loaded_context.get("data_source_type")
-             else:
-                 # 后备方案：尝试从 session_state 获取 (如果上面失败)
-                 data_type = st.session_state.get('file_type')
-                 if not data_type:
-                     st.error("错误：无法确定重新生成图表所需的数据源类型！")
-                     success = False ; image_path = None # Set default fail state
-                     print("[Regen Check] Error: data_type is None, cannot proceed.")
-                 else:
-                     print("[Regen Check] Warning: data_type obtained from session_state as fallback.")
-
-             # 只有在 data_type 有效时才继续获取路径和代码
-             if data_type:
-                 # --- 获取 persistent_path --- 
-                 persistent_path = None # Initialize path
-                 if data_type in ['csv', 'excel']: # 只有文件类型需要路径
-                     if loaded_context and loaded_context.get("data_source_details") and loaded_context["data_source_details"].get("stored_path"):
-                         persistent_path = loaded_context["data_source_details"]["stored_path"]
-                     else:
-                         # 后备方案：尝试从 session state 获取
-                         persistent_path = st.session_state.get('file_path')
-                         if not persistent_path:
-                             st.error("错误：无法确定重新生成图表所需的数据文件路径！")
-                             success = False ; image_path = None # Set fail state
-                             print("[Regen Check] Error: persistent_path is None for file type, cannot proceed.")
-                         else:
-                             print("[Regen Check] Warning: persistent_path obtained from session_state as fallback.")
-                 # else: # 对于 mysql 等类型，persistent_path 保持 None
-
-                 print(f"[Regen Check] Determined data_type: {data_type}")
-                 print(f"[Regen Check] Determined persistent_path: {persistent_path}") # Log the path
-
-                 # 获取要运行的代码
-                 code_to_run = st.session_state.get('visualization_code')
-
-                 # 只有在路径有效(或不需要) 且 代码存在 时才执行
-                 path_ok = (data_type not in ['csv', 'excel']) or persistent_path
-                 if path_ok and code_to_run:
-                     print(f"[Regen Check] Path OK, proceeding to execute code: {code_to_run[:100]}...") # Log before exec
-                     success, image_path = execute_code(
-                         code_to_run, 
-                         user_id=st.session_state.user_info['username'], # user_id 在外部已获取和检查
-                         session_id=current_session_id, 
-                         data_source_type=data_type,
-                         persistent_file_path=persistent_path # 使用新获取的 path
-                     )
-                     print(f"[Regen Check] Execute code result: {success}, image_path: {image_path}")
-                     if success:
-                         st.session_state.current_image = image_path
-                         st.session_state.chart_status = "generated"
-                         regenerated_message_content = "我已经根据您的要求重新生成了可视化图表："
-                         regen_message = {"role": "assistant","content_type": "image","content": {"path": image_path, "text": regenerated_message_content},"metadata": {"code": code_to_run}}
-                         if "messages" not in st.session_state: st.session_state.messages = []
-                         st.session_state.messages.append(regen_message) # Append first
-                         add_message_to_session(session_id=current_session_id, username=st.session_state.user_info['username'], role="assistant", content_type="image", content=regen_message["content"], metadata=regen_message["metadata"])
-                     else: 
-                         # execute_code 内部应该已经打印了错误，这里可以只标记失败
-                         st.error("图表生成失败，请查看终端日志获取详细信息。")
-                         st.session_state.chart_status = "failed"
-                 elif not path_ok:
-                     # 如果是因为路径问题失败，这里无需再显示错误，上面已经显示过了
-                     st.session_state.chart_status = "failed" # Mark as failed
-                 else: # code_to_run is None
-                     st.error("没有可用于重新生成的代码。")
-                     st.session_state.chart_status = "failed" # Mark as failed
-             # else: # 如果 data_type 获取失败，上面已经处理了错误
-             
-             # 重置标志位 (无论成功与否都应重置)
-             st.session_state.should_regenerate = False
-
     # --- Chat Interface Layout --- 
     left_col, right_col = st.columns([3, 1])
     with st.expander("数据信息", expanded=False):
@@ -920,108 +852,142 @@ elif st.session_state.get('file_uploaded') and st.session_state.get('description
                 except NameError: src_root = os.path.abspath("./src"); print("Warning: __file__ not found...")
 
                 for message_index, message in enumerate(st.session_state.messages): # Add index
+                    message_id = message.get('_id', uuid.uuid4().hex)
+                    
+                    # 已停用跳过逻辑，确保所有消息都正确显示
+                    # 分析结果现在直接在对话流中显示，不需要跳过
+                    
                     with st.chat_message(message["role"]):
                         content_type = message.get('content_type', 'text')
                         content = message.get('content')
                         metadata = message.get('metadata', {})
-                        message_id = message.get('_id', uuid.uuid4().hex)
-                        role = message.get('role') # Get role
+                        role = message.get('role')
+                        
+                        # 处理图片类型消息
+                        if content_type == 'image':
+                            if isinstance(content, dict):
+                                st.markdown(content.get("text", ""))
+                                image_path_relative = content.get('path')
+                                
+                                if image_path_relative:
+                                    try:
+                                        # 构建完整路径进行检查和打开
+                                        full_image_path = os.path.join(src_root, image_path_relative)
+                                        print(f"[Image Display] Checking for image at: {full_image_path}")
+                                        if os.path.exists(full_image_path):
+                                            with open(full_image_path, 'r', encoding='utf-8') as f:
+                                                svg_content = f.read()
+                                            if "svg_scale" not in st.session_state: 
+                                                st.session_state.svg_scale = {}
+                                            if full_image_path not in st.session_state.svg_scale: 
+                                                st.session_state.svg_scale[full_image_path] = 1.0
+                                            
+                                            if '<svg ' in svg_content:
+                                                w_match = re.search(r'width="([^"]*)"', svg_content)
+                                                h_match = re.search(r'height="([^"]*)"', svg_content)
+                                                o_w = w_match.group(1) if w_match else "600"
+                                                o_h = h_match.group(1) if h_match else "400"
+                                                o_w = re.sub(r'[^0-9.]', '', o_w)
+                                                o_h = re.sub(r'[^0-9.]', '', o_h)
+                                                try:
+                                                    scale = st.session_state.svg_scale[full_image_path]
+                                                    s_w = float(o_w)*scale
+                                                    s_h = float(o_h)*scale
+                                                    svg_content = re.sub(r'width="[^"]*"', f'width="{s_w}px"', svg_content)
+                                                    svg_content = re.sub(r'height="[^"]*"', f'height="{s_h}px"', svg_content)
+                                                except ValueError:
+                                                    pass
+                                            st.markdown(svg_content, unsafe_allow_html=True)
 
-                        print(f"[Display Loop {message_index}] Role: {role}, Type: {content_type}, Content Start: {str(content)[:50]}...") # Log each message start
-
-                        if content_type == 'text' and isinstance(content, str):
-                            is_assistant = (role == "assistant")
-                            # --- 修改：使用 Regex 查找代码块 --- 
-                            code_block_pattern = r"```(?:python|py)?\s*\n?(.*?)\s*\n?```"
-                            match = re.search(code_block_pattern, content, re.DOTALL)
-
-                            print(f"  [Check Code Block] Is Assistant: {is_assistant}, Regex Match: {'Found' if match else 'None'}")
-                            # --------------------------------------- 
-                            if is_assistant and match: # If it's an assistant message AND regex found a block
-                                print(f"  [Code Block Found via Regex] Trying to parse content.")
-                                try:
-                                    # Extract text before, code, and text after
-                                    text_before = content[:match.start()].strip()
-                                    display_code = match.group(1).strip() # Extract code from group 1
-                                    text_after = content[match.end():].strip()
-
-                                    # Display parts
-                                    if text_before: st.write(text_before)
-                                    print(f"  [Code Parsed] Extracted Code Length: {len(display_code)}")
-                                    if display_code:
-                                        st.code(display_code, language="python")
-                                        button_key = f"apply_code_{message_id}_{message_index}" # Use index too for uniqueness
-                                        st.button(
-                                            "应用此代码",
-                                            key=button_key,
-                                            on_click=apply_code_callback,
-                                            args=(display_code,)
-                                        )
-                                    else: print("  [Code Parsed Warning] Extracted code was empty.")
-                                    if text_after: st.write(text_after)
-
-                                except Exception as parse_e:
-                                     print(f"  [Code Parse Error] Error parsing regex-found code block: {parse_e}")
-                                     st.write(content) # Fallback to showing raw content on error
-                            else:
-                                # Display as normal text if not assistant or no code block found by regex
-                                st.write(content)
-                        elif content_type == 'image':
-                            image_path_relative = content.get('path') if isinstance(content, dict) else None
-                            associated_text = content.get('text') if isinstance(content, dict) else None
-                            code_str = metadata.get('code') if isinstance(metadata, dict) else None
-
-                            if associated_text:
-                                st.write(associated_text)
-
-                            if image_path_relative:
-                                try:
-                                    # --- 修改：构建完整路径进行检查和打开 ---
-                                    full_image_path = os.path.join(src_root, image_path_relative)
-                                    print(f"[Image Display] Checking for image at: {full_image_path}") # DEBUG Log
-                                    if os.path.exists(full_image_path):
-                                        with open(full_image_path, 'r', encoding='utf-8') as f:
-                                            svg_content = f.read()
-                                        if "svg_scale" not in st.session_state: st.session_state.svg_scale = {}
-                                        if full_image_path not in st.session_state.svg_scale: st.session_state.svg_scale[full_image_path] = 1.0 # Use full path as key?
-                                        if '<svg ' in svg_content:
-                                            w_match = re.search(r'width="([^"]*)"', svg_content)
-                                            h_match = re.search(r'height="([^"]*)"', svg_content)
-                                            o_w = w_match.group(1) if w_match else "600"
-                                            o_h = h_match.group(1) if h_match else "400"
-                                            o_w = re.sub(r'[^0-9.]', '', o_w)
-                                            o_h = re.sub(r'[^0-9.]', '', o_h)
-                                            try:
-                                                scale = st.session_state.svg_scale[full_image_path]
-                                                s_w = float(o_w)*scale
-                                                s_h = float(o_h)*scale
-                                                svg_content = re.sub(r'width="[^"]*"', f'width="{s_w}px"', svg_content)
-                                                svg_content = re.sub(r'height="[^"]*"', f'height="{s_h}px"', svg_content)
-                                            except ValueError:
-                                                pass
-                                        st.markdown(svg_content, unsafe_allow_html=True)
-
-                                        cols = st.columns(3)
-                                        with cols[0]:
-                                            if st.button("+", key=f"zoom_in_{message_id}"):
-                                                st.session_state.svg_scale[full_image_path] *= 1.2; st.rerun()
-                                        with cols[1]:
-                                            if st.button("-", key=f"zoom_out_{message_id}"):
-                                                st.session_state.svg_scale[full_image_path] *= 0.8; st.rerun()
-                                        with cols[2]:
-                                            with open(full_image_path, "rb") as file: # Use full path here
-                                                btn = st.download_button(label="down", data=file, file_name=f"chart_{message_id}.svg", mime="image/svg+xml", key=f"download_{message_id}")
-                                    else:
-                                        st.warning(f"图表文件未找到: {full_image_path} (Relative path: {image_path_relative})")
-                                except Exception as e:
-                                    st.error(f"显示图表时出错: {e}")
+                                            cols = st.columns(3)
+                                            with cols[0]:
+                                                if st.button("放大", key=f"zoom_in_{message_id}"):
+                                                    st.session_state.svg_scale[full_image_path] *= 1.2
+                                                    st.rerun()
+                                            with cols[1]:
+                                                if st.button("缩小", key=f"zoom_out_{message_id}"):
+                                                    st.session_state.svg_scale[full_image_path] *= 0.8
+                                                    st.rerun()
+                                            with cols[2]:
+                                                with open(full_image_path, "rb") as file:
+                                                    st.download_button(
+                                                        label="下载",
+                                                        data=file,
+                                                        file_name=f"chart_{message_id}.svg",
+                                                        mime="image/svg+xml",
+                                                        key=f"download_{message_id}"
+                                                    )
+                                        else:
+                                            st.warning(f"图表文件未找到: {full_image_path} (Relative path: {image_path_relative})")
+                                    except Exception as e:
+                                        st.error(f"显示图表时出错: {e}")
+                            
+                            # 显示元数据中的代码（如果有）
+                            if "metadata" in message and "code" in message["metadata"]:
+                                with st.expander("查看代码"):
+                                    st.code(message["metadata"]["code"], language="python")
+                                    st.button(
+                                        "应用此代码", 
+                                        key=f"apply_code_{message_id}_{message_index}",
+                                        on_click=apply_code_callback,
+                                        args=(message["metadata"]["code"],)
+                                    )
+                        # 处理文件上传消息
                         elif content_type == 'file_upload':
                             if isinstance(content, dict):
                                 st.info(f"文件上传: {content.get('original_filename', '?')}")
                             else:
                                 st.info("文件上传记录")
+                        # 处理文本类型消息
+                        elif content_type == 'text' and isinstance(content, str):
+                            if role == "assistant":
+                                # 使用正则表达式查找代码块
+                                code_block_pattern = r"```(?:python|py)?\s*\n?(.*?)\s*\n?```"
+                                match = re.search(code_block_pattern, content, re.DOTALL)
+                                
+                                if match:
+                                    # 提取代码前后的文本和代码块
+                                    text_before = content[:match.start()].strip()
+                                    display_code = match.group(1).strip()
+                                    text_after = content[match.end():].strip()
+                                    
+                                    # 显示代码前的文本
+                                    if text_before:
+                                        st.write(text_before)
+                                    
+                                    # 显示代码和应用按钮
+                                    if display_code:
+                                        st.code(display_code, language="python")
+                                        st.button(
+                                            "应用此代码",
+                                            key=f"apply_code_{message_id}_{message_index}",
+                                            on_click=apply_code_callback,
+                                            args=(display_code,)
+                                        )
+                                    
+                                    # 显示代码后的文本
+                                    if text_after:
+                                        st.write(text_after)
+                                else:
+                                    # 没有代码块，直接显示内容
+                                    st.write(content)
+                            else:
+                                # 非助手消息，直接显示
+                                st.write(content)
+                            
+                            # 如果元数据中有代码，也添加应用按钮
+                            if "code" in metadata:
+                                with st.expander("查看完整代码"):
+                                    st.code(metadata["code"], language="python")
+                                    st.button(
+                                        "应用此代码",
+                                        key=f"apply_meta_{message_id}_{message_index}",
+                                        on_click=apply_code_callback,
+                                        args=(metadata["code"],)
+                                    )
                         else:
-                            st.write(f"未知消息类型 '{content_type}': {content}")
+                            # 其他类型消息
+                            st.write(content)
             else:
                 st.info("开始您的分析对话吧！")
 
@@ -1189,16 +1155,157 @@ elif st.session_state.get('file_uploaded') and st.session_state.get('description
             if viz_code:
                 # 使用时间戳作为唯一key，确保每次rerun时都重新渲染
                 st.code(viz_code, language="python")
+                
+                # 检查代码类型，确定按钮文本
+                is_visualization_code = "savefig" in viz_code or "plt.save" in viz_code
+                execute_button_text = "重新生成图表" if is_visualization_code else "执行代码"
+                
                 col1, col2 = st.columns(2)
                 with col1:
                     if st.button("复制代码"):
                         st.toast("请手动复制上面的代码。")
                 with col2:
-                    if st.button("重新生成图表"):
-                        st.session_state.should_regenerate = True
-                        st.rerun()
+                    # 修改执行代码按钮的处理逻辑
+                    if st.button(execute_button_text):
+                        # 不再设置should_regenerate并rerun，而是直接执行代码
+                        with st.spinner("正在执行代码..."):
+                            # 从当前上下文获取数据类型
+                            loaded_context = st.session_state.get('loaded_context')
+                            data_type = None
+                            if loaded_context and loaded_context.get("data_source_type"):
+                                data_type = loaded_context.get("data_source_type")
+                            else:
+                                data_type = st.session_state.get('file_type')
+                            
+                            # 获取路径
+                            persistent_path = None
+                            if data_type in ['csv', 'excel']:
+                                if loaded_context and loaded_context.get("data_source_details") and loaded_context["data_source_details"].get("stored_path"):
+                                    persistent_path = loaded_context["data_source_details"]["stored_path"]
+                                else:
+                                    persistent_path = st.session_state.get('file_path')
+                            
+                            # 获取代码
+                            code_to_run = viz_code
+                            
+                            # 执行代码
+                            if data_type and (data_type not in ['csv', 'excel'] or persistent_path) and code_to_run:
+                                success, image_path, output_text = execute_code(
+                                    code_to_run, 
+                                    user_id=st.session_state.user_info['username'],
+                                    session_id=current_session_id, 
+                                    data_source_type=data_type,
+                                    persistent_file_path=persistent_path
+                                )
+                                
+                                if success:
+                                    st.session_state.chart_status = "generated"
+                                    
+                                    # 处理结果
+                                    if image_path:
+                                        # 图表生成情况 - 直接在聊天界面中显示
+                                        st.session_state.current_image = image_path
+                                        
+                                        # 在聊天容器中显示图表
+                                        with left_col:
+                                            with chat_container:
+                                                with st.chat_message("assistant"):
+                                                    st.markdown("我已经根据您的要求重新生成了可视化图表：")
+                                                    
+                                                    # 构建完整路径进行显示
+                                                    try:
+                                                        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+                                                        src_root = os.path.join(project_root, "src")
+                                                        full_image_path = os.path.join(src_root, image_path)
+                                                        
+                                                        if os.path.exists(full_image_path):
+                                                            with open(full_image_path, 'r', encoding='utf-8') as f:
+                                                                svg_content = f.read()
+                                                            # 直接显示SVG内容
+                                                            st.markdown(svg_content, unsafe_allow_html=True)
+                                                        else:
+                                                            st.warning(f"无法显示图表，文件不存在: {image_path}")
+                                                    except Exception as e:
+                                                        st.error(f"显示图表时出错: {e}")
+                                        
+                                        # 构建消息结构用于保存到历史记录
+                                        regenerated_message_content = "我已经根据您的要求重新生成了可视化图表："
+                                        regen_message = {
+                                            "role": "assistant",
+                                            "content_type": "image",
+                                            "content": {"path": image_path, "text": regenerated_message_content},
+                                            "metadata": {"code": code_to_run}
+                                        }
+                                        
+                                        # 保存到会话状态和数据库
+                                        if "messages" not in st.session_state: 
+                                            st.session_state.messages = []
+                                        st.session_state.messages.append(regen_message)
+                                        add_message_to_session(
+                                            session_id=current_session_id, 
+                                            username=st.session_state.user_info['username'], 
+                                            role="assistant", 
+                                            content_type=regen_message["content_type"], 
+                                            content=regen_message["content"], 
+                                            metadata=regen_message["metadata"]
+                                        )
+                                    else:
+                                        # 分析结果情况 - 直接在聊天界面流式显示
+                                        with left_col:
+                                            with chat_container:
+                                                with st.chat_message("assistant"):
+                                                    # 显示分析中消息
+                                                    analysis_placeholder = st.empty()
+                                                    analysis_placeholder.markdown("*分析正在生成中...*")
+                                                    
+                                                    # 使用streaming模块的函数进行流式分析
+                                                    from src.ai.streaming import process_analysis_streaming
+                                                    
+                                                    # 流式处理分析结果
+                                                    explanation = process_analysis_streaming(
+                                                        output_text,
+                                                        st.session_state.get('current_input', '分析数据'),
+                                                        data_context=st.session_state.get('loaded_context'),
+                                                        message_placeholder=analysis_placeholder
+                                                    )
+                                                    
+                                                    # 显示原始代码输出（可选）
+                                                    with st.expander("查看原始输出"):
+                                                        st.code(output_text, language="python")
+                                        
+                                        # 构建消息结构用于保存到历史记录
+                                        regenerated_message_content = explanation
+                                        regen_message = {
+                                            "role": "assistant",
+                                            "content_type": "text",
+                                            "content": regenerated_message_content,
+                                            "metadata": {"code": code_to_run, "raw_output": output_text},
+                                            "_id": f"analysis_{uuid.uuid4().hex}"
+                                        }
+                                        
+                                        # 添加到消息列表并保存到数据库
+                                        if "messages" not in st.session_state: 
+                                            st.session_state.messages = []
+                                        st.session_state.messages.append(regen_message)
+                                        add_message_to_session(
+                                            session_id=current_session_id, 
+                                            username=st.session_state.user_info['username'], 
+                                            role="assistant", 
+                                            content_type=regen_message["content_type"], 
+                                            content=regen_message["content"], 
+                                            metadata=regen_message["metadata"]
+                                        )
+                                else:
+                                    st.error(f"代码执行失败: {output_text}")
+                            else:
+                                if not data_type:
+                                    st.error("错误：无法确定数据源类型！")
+                                elif data_type in ['csv', 'excel'] and not persistent_path:
+                                    st.error("错误：无法确定数据文件路径！")
+                                else:
+                                    st.error("没有可用于执行的代码。")
             else:
-                st.info("暂无可视化代码。")
+                st.info("暂无代码。请从左侧聊天中选择代码。")
 
 # --- 页面底部清理代码 --- 
 if st.session_state.get("mysql_connection"):
