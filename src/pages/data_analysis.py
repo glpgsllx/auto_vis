@@ -16,6 +16,82 @@ from src.database.chat_history_db import add_message_to_session, get_messages_by
 from bson import ObjectId
 import functools # Import functools for partial if needed, or use args/kwargs directly
 
+# 修改SVG处理函数，将其提取到主代码之外，便于复用
+def display_svg_with_controls(image_path_relative, message_id):
+    """统一显示SVG图表并添加控制按钮
+    
+    Args:
+        image_path_relative: SVG图片的相对路径
+        message_id: 消息ID，用于生成唯一控件ID
+    """
+    try:
+        # 构建完整路径
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        src_root = os.path.join(project_root, "src")
+        full_image_path = os.path.join(src_root, image_path_relative)
+        
+        if os.path.exists(full_image_path):
+            with open(full_image_path, 'r', encoding='utf-8') as f:
+                svg_content = f.read()
+            
+            # 初始化缩放状态
+            if "svg_scale" not in st.session_state:
+                st.session_state.svg_scale = {}
+            if full_image_path not in st.session_state.svg_scale:
+                st.session_state.svg_scale[full_image_path] = 1.0
+            
+            # 获取默认宽高
+            default_width = st.session_state.default_chart_width
+            default_height = st.session_state.default_chart_height
+            
+            if '<svg ' in svg_content:
+                # 先提取原始宽高（如果有）
+                w_match = re.search(r'width="([^"]*)"', svg_content)
+                h_match = re.search(r'height="([^"]*)"', svg_content)
+                
+                # 使用默认宽高替换
+                svg_content = re.sub(r'width="[^"]*"', f'width="{default_width}px"', svg_content)
+                svg_content = re.sub(r'height="[^"]*"', f'height="{default_height}px"', svg_content)
+                
+                # 应用缩放
+                scale = st.session_state.svg_scale[full_image_path]
+                if scale != 1.0:
+                    scaled_width = int(default_width * scale)
+                    scaled_height = int(default_height * scale)
+                    svg_content = re.sub(r'width="[^"]*"', f'width="{scaled_width}px"', svg_content)
+                    svg_content = re.sub(r'height="[^"]*"', f'height="{scaled_height}px"', svg_content)
+            
+            # 显示SVG
+            st.markdown(svg_content, unsafe_allow_html=True)
+            
+            # 添加控制按钮
+            cols = st.columns(3)
+            with cols[0]:
+                if st.button("放大", key=f"zoom_in_{message_id}"):
+                    st.session_state.svg_scale[full_image_path] *= 1.2
+                    st.rerun()
+            with cols[1]:
+                if st.button("缩小", key=f"zoom_out_{message_id}"):
+                    st.session_state.svg_scale[full_image_path] *= 0.8
+                    st.rerun()
+            with cols[2]:
+                with open(full_image_path, "rb") as file:
+                    st.download_button(
+                        label="下载",
+                        data=file,
+                        file_name=f"chart_{message_id}.svg",
+                        mime="image/svg+xml",
+                        key=f"download_{message_id}"
+                    )
+            
+            return True
+        else:
+            st.warning(f"图表文件未找到: {full_image_path}")
+            return False
+    except Exception as e:
+        st.error(f"显示图表时出错: {e}")
+        return False
+
 st.set_page_config(
     page_title="数据分析 | 数据分析助手",
     page_icon="📊",
@@ -870,57 +946,10 @@ elif st.session_state.get('file_uploaded') and st.session_state.get('description
                                 image_path_relative = content.get('path')
                                 
                                 if image_path_relative:
-                                    try:
-                                        # 构建完整路径进行检查和打开
-                                        full_image_path = os.path.join(src_root, image_path_relative)
-                                        print(f"[Image Display] Checking for image at: {full_image_path}")
-                                        if os.path.exists(full_image_path):
-                                            with open(full_image_path, 'r', encoding='utf-8') as f:
-                                                svg_content = f.read()
-                                            if "svg_scale" not in st.session_state: 
-                                                st.session_state.svg_scale = {}
-                                            if full_image_path not in st.session_state.svg_scale: 
-                                                st.session_state.svg_scale[full_image_path] = 1.0
-                                            
-                                            if '<svg ' in svg_content:
-                                                w_match = re.search(r'width="([^"]*)"', svg_content)
-                                                h_match = re.search(r'height="([^"]*)"', svg_content)
-                                                o_w = w_match.group(1) if w_match else "600"
-                                                o_h = h_match.group(1) if h_match else "400"
-                                                o_w = re.sub(r'[^0-9.]', '', o_w)
-                                                o_h = re.sub(r'[^0-9.]', '', o_h)
-                                                try:
-                                                    scale = st.session_state.svg_scale[full_image_path]
-                                                    s_w = float(o_w)*scale
-                                                    s_h = float(o_h)*scale
-                                                    svg_content = re.sub(r'width="[^"]*"', f'width="{s_w}px"', svg_content)
-                                                    svg_content = re.sub(r'height="[^"]*"', f'height="{s_h}px"', svg_content)
-                                                except ValueError:
-                                                    pass
-                                            st.markdown(svg_content, unsafe_allow_html=True)
-
-                                            cols = st.columns(3)
-                                            with cols[0]:
-                                                if st.button("放大", key=f"zoom_in_{message_id}"):
-                                                    st.session_state.svg_scale[full_image_path] *= 1.2
-                                                    st.rerun()
-                                            with cols[1]:
-                                                if st.button("缩小", key=f"zoom_out_{message_id}"):
-                                                    st.session_state.svg_scale[full_image_path] *= 0.8
-                                                    st.rerun()
-                                            with cols[2]:
-                                                with open(full_image_path, "rb") as file:
-                                                    st.download_button(
-                                                        label="下载",
-                                                        data=file,
-                                                        file_name=f"chart_{message_id}.svg",
-                                                        mime="image/svg+xml",
-                                                        key=f"download_{message_id}"
-                                                    )
-                                        else:
-                                            st.warning(f"图表文件未找到: {full_image_path} (Relative path: {image_path_relative})")
-                                    except Exception as e:
-                                        st.error(f"显示图表时出错: {e}")
+                                    if display_svg_with_controls(image_path_relative, message_id):
+                                        pass
+                                    else:
+                                        st.warning(f"图表文件未找在: {image_path_relative}")
                             
                             # 显示元数据中的代码（如果有）
                             if "metadata" in message and "code" in message["metadata"]:
@@ -1150,6 +1179,26 @@ elif st.session_state.get('file_uploaded') and st.session_state.get('description
                 st.rerun()
 
     with right_col:
+        with st.expander("图表设置", expanded=False):
+            st.subheader("图表设置")
+            # 获取当前值或默认值
+            current_width = st.session_state.get("default_chart_width", 600)
+            current_height = st.session_state.get("default_chart_height", 400)
+            
+            # 添加滑块允许用户调整
+            new_width = st.slider("图表宽度", min_value=300, max_value=1200, value=current_width, step=50, key="chart_width_slider")
+            new_height = st.slider("图表高度", min_value=200, max_value=800, value=current_height, step=50, key="chart_height_slider")
+            
+            # 应用按钮
+            if st.button("应用尺寸", key="apply_chart_size"):
+                st.session_state.default_chart_width = new_width
+                st.session_state.default_chart_height = new_height
+                # 清除所有图表的缩放比例，使用新的默认大小
+                st.session_state.svg_scale = {}
+                st.rerun()
+                
+            st.info("调整后的尺寸将应用于所有图表。")
+            
         with st.expander("可视化代码", expanded=True):
             viz_code = st.session_state.get('visualization_code')
             if viz_code:
@@ -1211,22 +1260,7 @@ elif st.session_state.get('file_uploaded') and st.session_state.get('description
                                             with chat_container:
                                                 with st.chat_message("assistant"):
                                                     st.markdown("我已经根据您的要求重新生成了可视化图表：")
-                                                    
-                                                    # 构建完整路径进行显示
-                                                    try:
-                                                        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-                                                        src_root = os.path.join(project_root, "src")
-                                                        full_image_path = os.path.join(src_root, image_path)
-                                                        
-                                                        if os.path.exists(full_image_path):
-                                                            with open(full_image_path, 'r', encoding='utf-8') as f:
-                                                                svg_content = f.read()
-                                                            # 直接显示SVG内容
-                                                            st.markdown(svg_content, unsafe_allow_html=True)
-                                                        else:
-                                                            st.warning(f"无法显示图表，文件不存在: {image_path}")
-                                                    except Exception as e:
-                                                        st.error(f"显示图表时出错: {e}")
+                                                    display_svg_with_controls(image_path, message_id=f"regen_{uuid.uuid4().hex}")
                                         
                                         # 构建消息结构用于保存到历史记录
                                         regenerated_message_content = "我已经根据您的要求重新生成了可视化图表："
@@ -1311,4 +1345,12 @@ elif st.session_state.get('file_uploaded') and st.session_state.get('description
 if st.session_state.get("mysql_connection"):
     close_mysql_connection(st.session_state.mysql_connection)
     st.session_state.mysql_connection = None 
+
+# 添加默认图表大小设置
+if "svg_scale" not in st.session_state:  # 存储SVG缩放比例
+    st.session_state.svg_scale = {}
+if "default_chart_width" not in st.session_state:  # 默认图表宽度
+    st.session_state.default_chart_width = 600
+if "default_chart_height" not in st.session_state:  # 默认图表高度
+    st.session_state.default_chart_height = 400
 
