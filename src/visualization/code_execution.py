@@ -7,6 +7,98 @@ from autogen.coding import LocalCommandLineCodeExecutor, CodeBlock
 import re # Import re for more robust replacement if needed
 import traceback # Make sure traceback is imported for the except block
 
+# 修改过滤警告函数，添加字体相关警告的规则
+def filter_warnings(output_text):
+    """过滤掉输出中的警告信息 (使用安全的按行过滤)
+    
+    Args:
+        output_text (str): 原始输出文本
+        
+    Returns:
+        str: 过滤后的文本
+    """
+    print("[filter_warnings] 使用按行过滤方法处理输出...")
+    if not output_text:
+        return ""
+        
+    lines = output_text.splitlines()
+    filtered_lines = []
+    
+    # 定义要过滤掉的警告关键词或前缀
+    warning_keywords = [
+        "Warning:", 
+        "UserWarning:", 
+        "DeprecationWarning:", 
+        "FutureWarning:", 
+        "RuntimeWarning:",
+        "MatplotlibDeprecationWarning:",
+        "findfont:"
+    ]
+    
+    # 定义要过滤掉的特定代码行片段 (新增)
+    code_lines_to_filter = [
+        "pd.read_sql(",
+        "plt.tight_layout()"
+    ]
+    
+    # 定义要过滤掉的字体相关行中的特定词 (避免误删)
+    font_line_keywords_to_filter = [
+        "Microsoft YaHei",
+        "SimHei",
+        "WenQuanYi",
+        "Noto Sans CJK JP"
+    ]
+
+    for line in lines:
+        line_stripped = line.strip()
+        should_filter = False
+        
+        # --- 添加更详细的日志 --- 
+        # print(f"  [Line Process] Processing line: {line}") # Can be noisy, comment out if needed
+        
+        # 检查是否包含警告关键词
+        for keyword in warning_keywords:
+            if keyword in line_stripped: # Case-sensitive check
+                should_filter = True
+                print(f"    [Filter Decision] Match found for warning keyword '{keyword}'. Filtering line.")
+                break 
+        
+        # 检查是否包含要过滤的代码行片段 (新增)
+        if not should_filter:
+            for code_snippet in code_lines_to_filter:
+                if code_snippet in line: # Check in original line to catch variations
+                    should_filter = True
+                    print(f"    [Filter Decision] Match found for code snippet '{code_snippet}'. Filtering line.")
+                    break
+        
+        # 如果是以 findfont 开头，再检查是否包含特定字体名 (保持不变)
+        if not should_filter and line_stripped.startswith("findfont:"):
+             for font_keyword in font_line_keywords_to_filter:
+                 if font_keyword in line: # Check in original line for context
+                     should_filter = True
+                     print(f"    [Filter Decision] Match found for findfont keyword '{font_keyword}'. Filtering line.")
+                     break
+        
+        # 检查是否是 plt.savefig 行 (保持不变)
+        if not should_filter and line_stripped.startswith("plt.savefig("):
+            should_filter = True
+            print(f"    [Filter Decision] Match found for plt.savefig. Filtering line.")
+            
+        # 打印最终决定并添加行
+        if not should_filter:
+            # print(f"    [Filter Decision] Keeping line.") # Can be noisy
+            filtered_lines.append(line)
+        # else:
+            # print(f"    [Filter Decision] Filtering line.") # Can be noisy
+            
+    # 重新组合过滤后的行，并去除多余的空行
+    filtered_text = '\n'.join(filtered_lines)
+    # 移除连续的空行（两个或更多换行符替换为一个）
+    filtered_text = re.sub(r'\n{2,}', '\n\n', filtered_text) 
+    
+    print(f"[filter_warnings] 过滤完成，原始行数: {len(lines)}, 过滤后行数: {len(filtered_lines)}")
+    return filtered_text.strip()
+
 # 创建一个本地命令行代码执行器，工作目录设定为 codeexe
 # 注意：所有在代码中使用的相对路径都是相对于这个 work_dir
 executor = LocalCommandLineCodeExecutor(
@@ -182,6 +274,10 @@ plt.rcParams['svg.fonttype'] = 'none'  # 确保字体被正确嵌入到SVG中
 
         print(f"代码执行退出码: {execution_result.exit_code}")
         print(f"代码执行输出:\n{execution_result.output}")
+        
+        # 过滤警告信息
+        filtered_output = filter_warnings(execution_result.output)
+        print(f"过滤警告后的输出:\n{filtered_output}")
 
         # --- 8. 检查图片生成并返回相对路径 ---
         if execution_result.exit_code == 0: # 检查退出码是否为0 (成功)
@@ -189,14 +285,14 @@ plt.rcParams['svg.fonttype'] = 'none'  # 确保字体被正确嵌入到SVG中
             if os.path.exists(target_file_full_path):
                 print(f"图表成功生成于: {target_file_full_path}")
                 # 返回相对于 src 目录的路径
-                return True, os.path.join(target_dir_relative_to_src, chart_filename).replace(os.sep, '/'), execution_result.output
+                return True, os.path.join(target_dir_relative_to_src, chart_filename).replace(os.sep, '/'), filtered_output
             else:
                 print(f"代码执行成功，但目标文件未找到: {target_file_full_path}")
                 print(f"这可能是分析计算代码而非可视化代码，返回执行结果")
-                return True, None, execution_result.output
+                return True, None, filtered_output
         else:
             print(f"代码执行失败 (退出码: {execution_result.exit_code})。输出:\n{execution_result.output}")
-            return False, None, execution_result.output
+            return False, None, execution_result.output  # 失败时保留原始输出，包括警告，便于调试
 
     except Exception as e:
         error_msg = f"执行代码时发生严重错误：{str(e)}\n{traceback.format_exc()}"

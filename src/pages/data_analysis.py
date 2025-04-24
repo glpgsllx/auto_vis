@@ -11,7 +11,7 @@ from src.visualization.code_generation import create_chart
 from src.web_utils.ui_elements import display_sidebar_user_info, display_error, display_success, display_code, display_dataframe_info
 from src.database.mysql import connect_mysql, get_mysql_tables, get_mysql_table_data, close_mysql_connection
 from src.visualization.code_execution import execute_code
-from src.ai.streaming import get_streaming_response, process_analysis_streaming
+from src.ai.streaming import get_streaming_response, process_analysis_streaming, process_image_streaming
 from src.database.chat_history_db import add_message_to_session, get_messages_by_session, update_session_name, get_session_details, update_session_data_context
 from bson import ObjectId
 import functools # Import functools for partial if needed, or use args/kwargs directly
@@ -884,6 +884,7 @@ elif st.session_state.get('file_uploaded') and st.session_state.get('description
 
                  # 再尝试存入数据库
                  if current_session_id:
+                     print("[Initial Chart Gen] Attempting to save initial message to DB...") # 添加日志
                      add_success = add_message_to_session(
                          session_id=current_session_id,
                          username=st.session_state.user_info['username'],
@@ -896,9 +897,13 @@ elif st.session_state.get('file_uploaded') and st.session_state.get('description
                          print("[Initial Chart Gen] Initial message saved to DB successfully.")
                      else:
                          print("[Initial Chart Gen] Failed to save initial message to DB.")
+                 else:
+                      print("[Initial Chart Gen] Error: Cannot save initial message, current_session_id is missing.") # 添加日志
             else:
                 st.error(f"图表生成失败: {result}")
                 st.session_state.chart_status = "failed"
+            
+            print("[Initial Chart Gen] Finished initial generation block.") # 添加日志
 
     # --- Chat Interface Layout --- 
     left_col, right_col = st.columns([3, 1])
@@ -961,6 +966,16 @@ elif st.session_state.get('file_uploaded') and st.session_state.get('description
                                         on_click=apply_code_callback,
                                         args=(message["metadata"]["code"],)
                                     )
+                                
+                                # 显示保存的图表解释（如果有）
+                                if "explanation" in message["metadata"] and message["metadata"]["explanation"]:
+                                    st.markdown("### 图表分析")
+                                    st.markdown(message["metadata"]["explanation"])
+                                    
+                                    # 如果有原始输出，提供查看选项
+                                    if "raw_output" in message["metadata"] and message["metadata"]["raw_output"].strip():
+                                        with st.expander("查看原始输出"):
+                                            st.code(message["metadata"]["raw_output"], language="text")
                         # 处理文件上传消息
                         elif content_type == 'file_upload':
                             if isinstance(content, dict):
@@ -1136,6 +1151,19 @@ elif st.session_state.get('file_uploaded') and st.session_state.get('description
             user_input = st.text_input("请输入您的问题", key="temp_input")
             submit_button = st.form_submit_button("发送")
             if submit_button and user_input:
+                # 生成当前输入的唯一ID，使用毫秒级时间戳和随机UUID来确保唯一性
+                current_input_id = f"{user_input}_{time.time()}_{uuid.uuid4().hex[:8]}"
+                
+                # 检查是否是重复提交
+                last_input_id = st.session_state.get("last_input_id", "")
+                if last_input_id and last_input_id.split('_')[0] == user_input and time.time() - float(last_input_id.split('_')[1]) < 2.0:
+                    # 这是短时间内(2秒内)的重复内容提交，跳过处理
+                    st.toast("请勿重复提交相同内容", icon="⚠️")
+                    st.rerun()
+                    
+                # 存储当前输入ID，防止重复处理
+                st.session_state.last_input_id = current_input_id
+                
                 # 1. 立即显示用户消息
                 with chat_container: # 确保在聊天容器内显示
                      with st.chat_message("user"):
@@ -1259,16 +1287,55 @@ elif st.session_state.get('file_uploaded') and st.session_state.get('description
                                         with left_col:
                                             with chat_container:
                                                 with st.chat_message("assistant"):
-                                                    st.markdown("我已经根据您的要求重新生成了可视化图表：")
+                                                    # 显示图表
+                                                    st.markdown("我已经根据您的要求生成了可视化图表：")
                                                     display_svg_with_controls(image_path, message_id=f"regen_{uuid.uuid4().hex}")
-                                        
+                                                    
+                                                    if output_text.strip():
+                                                        # 添加分析中消息
+                                                        analysis_placeholder = st.empty()
+                                                        analysis_placeholder.markdown("*分析图表中...*")
+                                                        
+                                                        # # 使用streaming模块的函数进行流式分析
+                                                        from src.ai.streaming import process_image_streaming
+                                                        
+                                                                                                            
+                                                        # 流式处理图表分析结果
+                                                        explanation = process_image_streaming(
+                                                            output_text,  # 包含print输出的内容
+                                                            st.session_state.get('current_input', '生成图表'),
+                                                            data_context=st.session_state.get('loaded_context'),
+                                                            message_placeholder=analysis_placeholder
+                                                        )
+                                                        
+                                                        # --- 检查 explanation 是否有效 ---
+                                                        if not explanation:
+                                                            print("[Chart Analysis] process_image_streaming 未返回有效的解释.")
+                                                            explanation = ""
+                                                        # --------------------------------
+                                                        
+                                                        # 可选：显示原始代码输出（如果有）
+                                                        if output_text.strip():
+                                                            with st.expander("查看原始输出"):
+                                                                st.code(output_text, language="text")
+                                            
                                         # 构建消息结构用于保存到历史记录
                                         regenerated_message_content = "我已经根据您的要求重新生成了可视化图表："
+                                        
+                                        # --- 修改：动态构建 metadata ---
+                                        regen_metadata = {
+                                            "code": code_to_run,
+                                            "raw_output": output_text
+                                        }
+                                        if explanation: # 只有在 explanation 有效时才添加
+                                            regen_metadata["explanation"] = explanation
+                                        # ---------------------------
+                                        
                                         regen_message = {
                                             "role": "assistant",
                                             "content_type": "image",
                                             "content": {"path": image_path, "text": regenerated_message_content},
-                                            "metadata": {"code": code_to_run}
+                                            "metadata": regen_metadata # 使用动态构建的 metadata
                                         }
                                         
                                         # 保存到会话状态和数据库
