@@ -19,7 +19,7 @@ class StreamingLLM:
         # self.model = "/model"
         
         if not self.api_key:
-            raise ValueError("环境变量MODELSCOPE_API_KEY未设置")
+            raise ValueError("MODELSCOPE_API_KEY is not set")
     
     def _create_headers(self):
         """创建请求头"""
@@ -56,7 +56,7 @@ class StreamingLLM:
         )
         
         if response.status_code != 200:
-            raise Exception(f"API调用失败: {response.status_code} - {response.text}")
+            raise Exception(f"API request failed: {response.status_code} - {response.text}")
         
         if stream:
             return self._handle_streaming_response(response)
@@ -108,10 +108,10 @@ def get_streaming_response(user_message, data_context, history: list = None, mes
         image_id = uuid.uuid4().hex
     
     # 构建系统消息
-    system_message = """你是一个专业的数据分析助手。你可以帮助用户分析和理解数据，并提供专业的见解。
-请根据用户的历史对话和当前问题给出回复。
+    system_message = """You are a professional data analysis assistant. You help users analyze and understand data and provide expert insights.
+Please respond based on the conversation history and the current question.
 
-数据源信息:
+Data source details:
 """
     ds_type = data_context.get("data_source_type")
     ds_details = data_context.get("data_source_details", {})
@@ -123,62 +123,62 @@ def get_streaming_response(user_message, data_context, history: list = None, mes
 
     if ds_type == 'csv':
         placeholder_filename = 'data.csv' # Fixed placeholder
-        system_message += f"- 类型: 文件 (CSV)\n"
-        system_message += f"- 列描述见下文。"
-        load_instruction = f"代码中读取数据时，请始终使用 `pd.read_csv('{placeholder_filename}')`。"
+        system_message += f"- Type: File (CSV)\n"
+        system_message += f"- Column descriptions below."
+        load_instruction = f"When loading data in code, always use `pd.read_csv('{placeholder_filename}')`."
     elif ds_type == 'excel':
         placeholder_filename = 'data.xlsx' # Fixed placeholder
-        system_message += f"- 类型: 文件 (Excel)\n"
-        system_message += f"- 列描述见下文。"
-        load_instruction = f"代码中读取数据时，请始终使用 `pd.read_excel('{placeholder_filename}')`。"
+        system_message += f"- Type: File (Excel)\n"
+        system_message += f"- Column descriptions below."
+        load_instruction = f"When loading data in code, always use `pd.read_excel('{placeholder_filename}')`."
     elif ds_type == 'mysql':
         # MySQL 保持不变，仍需提供连接信息
         conn_info = ds_details.get("connection_info", {})
-        table_name = ds_details.get("table_name", "未知表名")
-        system_message += f"- 类型: MySQL数据库\n"
-        system_message += f"- 服务器: {conn_info.get('host', '?')}:{conn_info.get('port', '?')}\n"
-        system_message += f"- 数据库: {conn_info.get('database', '?')}\n"
-        system_message += f"- 用户名: {conn_info.get('user', '?')}\n"
-        system_message += f"- 表名: {table_name}\n"
-        load_instruction = f"代码中需要连接上述 MySQL 数据库 (密码将在执行时自动填充)，并使用 `pd.read_sql('SELECT * FROM `{table_name}`', connection)` 查询表 '{table_name}'。"
+        table_name = ds_details.get("table_name", "unknown_table")
+        system_message += f"- Type: MySQL database\n"
+        system_message += f"- Host: {conn_info.get('host', '?')}:{conn_info.get('port', '?')}\n"
+        system_message += f"- Database: {conn_info.get('database', '?')}\n"
+        system_message += f"- User: {conn_info.get('user', '?')}\n"
+        system_message += f"- Table: {table_name}\n"
+        load_instruction = f"In code, connect to the above MySQL (password will be injected at runtime) and query the table using `pd.read_sql('SELECT * FROM `{table_name}`', connection)`."
     else:
-        system_message += "- 未提供或无法识别的数据源。\n"
-        load_instruction = "无法确定数据加载方式。"
+        system_message += "- Data source not provided or unrecognized.\n"
+        load_instruction = "Unable to determine how to load the data."
 
-    system_message += "\n列描述:\n"
+    system_message += "\nColumn descriptions:\n"
     if col_descs:
         for col, desc in col_descs.items():
-            system_message += f"- {col}: {desc if desc else '(无描述)'}\n"
+            system_message += f"- {col}: {desc if desc else '(no description)'}\n"
     else:
-        system_message += "- 无列描述信息。\n"
+        system_message += "- No column descriptions.\n"
 
     system_message += """
 
-当前可视化代码 (如果存在):
+Current visualization code (if any):
 {current_code}
 
---- 代码生成规则 ---
+--- Code generation rules ---
 {load_instruction}
 
-1. 请根据用户需求判断并生成合适的Python代码:
+1. Generate appropriate Python code based on the user's needs:
 
-   A. 如果用户需要数据可视化（图表、图形等）:
-      - 使用matplotlib进行绘图
-      - 确保代码能独立运行（包含必要的import）
-      - 务必将最终生成的图表保存为'answer.svg'
-      - 不要使用seaborn、plotly或其他可视化库
-      - 输出格式必须为【单个】Markdown 代码块，使用```python 开头并以```结尾；不要输出任何额外文字或说明
+   A. If the user asks for a visualization (charts, figures):
+      - Use matplotlib for plotting
+      - Ensure the code is runnable and self-contained (includes necessary imports)
+      - Save the final chart to 'answer.svg'
+      - Do NOT use seaborn, plotly or other viz libraries
+      - Output must be a single Markdown code block starting with ```python and ending with ```; no extra text
 
-   B. 如果用户需要数据分析或计算（如均值、总和、排序等统计分析）:
-      - 生成简洁的计算代码
-      - 使用print()函数打印用户的问题和结果，格式清晰易读
-      - 不要包含图表生成或保存代码
-      - 确保输出结果便于阅读和理解
+   B. If the user asks for analysis-only (stats, calculations, sorting):
+      - Generate concise calculation code
+      - Use print() to clearly print the question and results
+      - Do not include plotting/saving code
+      - Ensure outputs are easy to read
 
-请记住：读取数据时使用指定的占位符（如果是文件）或指定的数据库连接/查询（如果是MySQL）。
+Remember: use the specified placeholders when loading files or the specified DB connection when using MySQL.
 
-请不要生成额外的解释！！！
-""".format(current_code=data_context.get('current_code', '(无)'), load_instruction=load_instruction)
+Do NOT generate extra explanations!!!
+""".format(current_code=data_context.get('current_code', '(none)'), load_instruction=load_instruction)
 
     # 构建包含历史记录的消息列表
     messages = [{"role": "system", "content": system_message}]
@@ -206,7 +206,7 @@ def get_streaming_response(user_message, data_context, history: list = None, mes
         except Exception as e:
             print(f"Error during streaming generation: {e}")
             try:
-                message_placeholder.error(f"生成回复时出错: {e}")
+                message_placeholder.error(f"Error generating response: {e}")
             except Exception:
                 pass
             return None
@@ -216,7 +216,7 @@ def get_streaming_response(user_message, data_context, history: list = None, mes
         except Exception as e:
             print(f"Error during non-streaming generation: {e}")
             try:
-                st.error(f"生成回复时出错: {e}")
+                st.error(f"Error generating response: {e}")
             except Exception:
                 pass
             return None
@@ -236,18 +236,18 @@ def process_analysis_streaming(output_text, user_query, data_context=None, messa
         str: 对分析结果的专业解释
     """
     # 构建系统消息
-    system_message = """你是一个专业的数据分析师。你的任务是解释分析代码的执行结果，并将其转化为用户易于理解的内容。
-请确保解释准确、专业，同时简洁明了。不要简单重复数字，而是提供有价值的见解和解释。如果执行结果为空，请不要输出内容"""
+    system_message = """You are a professional data analyst. Your task is to explain the execution results of analysis code in a way the user can easily understand.
+Ensure the explanation is accurate, professional, and concise. Do not merely repeat numbers; provide insights. If the output is empty, return nothing."""
     
     # 初始化上下文描述
     context_desc = ""
     if data_context:
         ds_type = data_context.get("data_source_type")
         if ds_type:
-            context_desc += f"\n\n数据来源: {ds_type}\n"
+            context_desc += f"\n\nData source: {ds_type}\n"
         
         if data_context.get('column_descriptions'):
-            context_desc += "\n列描述信息:\n"
+            context_desc += "\nColumn descriptions:\n"
             for col, desc in data_context.get('column_descriptions', {}).items():
                 if desc:
                     context_desc += f"- {col}: {desc}\n"
@@ -256,15 +256,15 @@ def process_analysis_streaming(output_text, user_query, data_context=None, messa
     print("*" * 100)
     print(user_query)
     print("*" * 100)
-    prompt = f"""基于以下代码执行结果，对用户的问题"{user_query}"进行专业解释：
+    prompt = f"""Based on the following code execution output, provide a professional explanation for the user's query "{user_query}":
 
-执行结果:
+Output:
 ```
 {output_text}
 ```
 {context_desc}
 
-请提供简洁、专业的解释，帮助用户理解这些结果的意义。专注于重要的发现和洞见，而不是简单重复数字。如果执行结果为空，请不要输出内容
+Provide a concise, professional explanation focusing on key findings and insights, not on repeating numbers. If the output is empty, return nothing.
 """
     
     # 构建消息列表
@@ -289,8 +289,8 @@ def process_analysis_streaming(output_text, user_query, data_context=None, messa
                     message_placeholder.markdown(full_reply)
             except Exception as e:
                 print(f"Error during analysis streaming generation: {e}")
-                # 在出错情况下，提供一个基本的分析
-                fallback_response = f"## 分析结果\n\n以下是代码执行的输出结果：\n\n```\n{output_text}\n```\n\n由于无法生成详细分析，请直接查看上述结果。"
+                # Provide a basic analysis if streaming fails
+                fallback_response = f"## Analysis Result\n\nHere is the code execution output:\n\n```\n{output_text}\n```\n\nUnable to generate a detailed analysis; please review the output above."
                 message_placeholder.markdown(fallback_response)
                 return fallback_response
         else:
@@ -298,20 +298,20 @@ def process_analysis_streaming(output_text, user_query, data_context=None, messa
                 full_reply = llm.generate_response(messages, stream=False)
             except Exception as e:
                 print(f"Error during analysis non-streaming generation: {e}")
-                # 返回基本分析
-                return f"## 分析结果\n\n以下是代码执行的输出结果：\n\n```\n{output_text}\n```"
+                # Return basic analysis
+                return f"## Analysis Result\n\n```\n{output_text}\n```"
         
-        return full_reply or f"## 分析结果\n\n```\n{output_text}\n```"
+        return full_reply or f"## Analysis Result\n\n```\n{output_text}\n```"
     
     except Exception as global_e:
-        # 全局异常处理
-        error_message = f"生成分析时出错: {global_e}"
+        # Global error handling
+        error_message = f"Error generating analysis: {global_e}"
         print(error_message)
         if message_placeholder:
             message_placeholder.error(error_message)
         
-        # 返回一个基本的输出结果
-        basic_response = f"## 分析结果\n\n以下是代码执行的输出结果：\n\n```\n{output_text}\n```"
+        # Return a basic output
+        basic_response = f"## Analysis Result\n\nOutput from code execution:\n\n```\n{output_text}\n```"
         if message_placeholder:
             message_placeholder.markdown(basic_response)
         return basic_response 
@@ -330,32 +330,32 @@ def process_image_streaming(output_text, user_query, data_context=None, message_
         str: 对分析结果的专业解释
     """
     # 构建系统消息
-    system_message = """你是一个专业的数据分析师。你的任务是解释分析生成可视化图表代码的执行结果，并将其转化为用户易于理解的内容。
-如果执行结果为空，请不要输出内容。如果内容都是警报，请不要输出内容"""
+    system_message = """You are a professional data analyst. Your task is to explain the execution results of visualization code and make them easy to understand.
+If the output is empty, return nothing. If the content is only warnings, return nothing as well."""
     
     # 初始化上下文描述
     context_desc = ""
     if data_context:
         ds_type = data_context.get("data_source_type")
         if ds_type:
-            context_desc += f"\n\n数据来源: {ds_type}\n"
+            context_desc += f"\n\nData source: {ds_type}\n"
         
         if data_context.get('column_descriptions'):
-            context_desc += "\n列描述信息:\n"
+            context_desc += "\nColumn descriptions:\n"
             for col, desc in data_context.get('column_descriptions', {}).items():
                 if desc:
                     context_desc += f"- {col}: {desc}\n"
     
     # 构建完整提示
-    prompt = f"""基于以下代码执行结果，对用户的问题"{user_query}"进行专业解释：
+    prompt = f"""Based on the following code execution output, provide a professional explanation for the user's query "{user_query}":
 
-执行结果:
+Output:
 ```
 {output_text}
 ```
 {context_desc}
 
-请提供简洁、专业的解释，帮助用户理解这些结果的意义。如果执行结果为空，请不要输出内容。如果内容都是警报，请也不要输出内容
+Provide a concise, professional explanation to help the user understand the results. If the output is empty, return nothing. If the content is only warnings, also return nothing.
 """
     
     # 构建消息列表
@@ -382,7 +382,7 @@ def process_image_streaming(output_text, user_query, data_context=None, message_
                 print(f"Error during analysis streaming generation: {e}")
                 # 在出错情况下，提供一个基本的分析
                 #fallback_response = f"## 分析结果\n\n以下是代码执行的输出结果：\n\n```\n{output_text}\n```\n\n由于无法生成详细分析，请直接查看上述结果。"
-                fallback_response = "没有结果输出"
+                fallback_response = "No output"
                 message_placeholder.markdown(fallback_response)
                 return fallback_response
         else:
@@ -397,13 +397,13 @@ def process_image_streaming(output_text, user_query, data_context=None, message_
     
     except Exception as global_e:
         # 全局异常处理
-        error_message = f"生成分析时出错: {global_e}"
+        error_message = f"Error generating analysis: {global_e}"
         print(error_message)
         if message_placeholder:
             message_placeholder.error(error_message)
         
         # 返回一个基本的输出结果
-        basic_response = f"## 分析结果\n\n以下是代码执行的输出结果：\n\n```\n{output_text}\n```"
+        basic_response = f"## Analysis Result\n\nOutput from code execution:\n\n```\n{output_text}\n```"
         if message_placeholder:
             message_placeholder.markdown(basic_response)
         return basic_response 

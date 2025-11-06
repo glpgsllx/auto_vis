@@ -3,7 +3,7 @@ from src.auth.auth import login_user, register_user
 from src.web_utils.ui_elements import display_error, display_success, create_text_input, create_button
 
 st.set_page_config(
-    page_title="登录 | 数据分析助手",
+    page_title="Login | Data Analysis Assistant",
     page_icon="🔐",
     layout="centered"
 )
@@ -61,16 +61,16 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 应用标题
+# App title
 st.markdown("""
 <div style="text-align: center; margin-bottom: 2rem;">
-    <h1>数据分析助手</h1>
-    <p>您的智能数据分析伙伴</p>
+    <h1>Data Analysis Assistant</h1>
+    <p>Your intelligent data analysis companion</p>
 </div>
 """, unsafe_allow_html=True)
 
-# 登录/注册标签页
-login_tab, register_tab = st.tabs(["登录", "注册"])
+# Tabs: Login / Register
+login_tab, register_tab = st.tabs(["Log In", "Sign Up"])
 
 # 登录标签页
 with login_tab:
@@ -79,18 +79,18 @@ with login_tab:
         st.image("https://img.icons8.com/color/96/000000/user-male-circle--v1.png", width=80)
     with col2:
         st.markdown("""
-        <h2 style="margin-bottom: 5px;">欢迎回来</h2>
-        <p style="color: #666; margin-top: 0;">请登录您的账号</p>
+        <h2 style="margin-bottom: 5px;">Welcome back</h2>
+        <p style="color: #666; margin-top: 0;">Please sign in to your account</p>
         """, unsafe_allow_html=True)
     
-    username = create_text_input("用户名", key="login_username")
-    password = create_text_input("密码", key="login_password", type="password")
+    username = create_text_input("Username", key="login_username")
+    password = create_text_input("Password", key="login_password", type="password")
     
-    remember_me = st.checkbox("记住我", value=True)
+    remember_me = st.checkbox("Remember me", value=True)
     
-    if create_button("登录", key="login_button"):
+    if create_button("Log In", key="login_button"):
         if not username or not password:
-            display_error("请输入用户名和密码")
+            display_error("Please enter username and password")
         else:
             success, message, user_info = login_user(username, password)
             if success:
@@ -100,7 +100,7 @@ with login_tab:
             else:
                 display_error(message)
     
-    st.markdown("<div style='text-align: center; margin-top: 1rem;'><a href='#'>忘记密码？</a></div>", unsafe_allow_html=True)
+    st.markdown("<div style='text-align: center; margin-top: 1rem;'><a href='#'>Forgot password?</a></div>", unsafe_allow_html=True)
 
 # 注册标签页
 with register_tab:
@@ -109,28 +109,28 @@ with register_tab:
         st.image("https://img.icons8.com/color/96/000000/add-user-male--v1.png", width=80)
     with col2:
         st.markdown("""
-        <h2 style="margin-bottom: 5px;">创建账号</h2>
-        <p style="color: #666; margin-top: 0;">开始您的数据分析之旅</p>
+        <h2 style="margin-bottom: 5px;">Create account</h2>
+        <p style="color: #666; margin-top: 0;">Start your data analysis journey</p>
         """, unsafe_allow_html=True)
     
-    username = create_text_input("用户名", key="register_username")
-    email = create_text_input("电子邮箱", key="register_email")
-    password = create_text_input("密码", key="register_password", type="password")
-    confirm_password = create_text_input("确认密码", key="register_confirm_password", type="password")
+    username = create_text_input("Username", key="register_username")
+    email = create_text_input("Email", key="register_email")
+    password = create_text_input("Password", key="register_password", type="password")
+    confirm_password = create_text_input("Confirm Password", key="register_confirm_password", type="password")
     
-    agree_terms = st.checkbox("我同意服务条款和隐私政策", value=False)
+    agree_terms = st.checkbox("I agree to the Terms of Service and Privacy Policy", value=False)
     
-    if create_button("注册", key="register_button"):
+    if create_button("Sign Up", key="register_button"):
         if not username or not email or not password or not confirm_password:
-            display_error("请填写所有必填字段")
+            display_error("Please fill in all required fields")
         elif password != confirm_password:
-            display_error("两次输入的密码不匹配")
+            display_error("Passwords do not match")
         elif not agree_terms:
-            display_error("请同意服务条款和隐私政策")
+            display_error("Please accept the Terms and Privacy Policy")
         else:
             success, message = register_user(username, password, email)
             if success:
-                display_success("注册成功，请登录")
+                display_success("Registration successful. Please log in.")
                 # 自动切换到登录标签
                 st.experimental_set_query_params(view="login")
                 st.rerun()
@@ -141,6 +141,6 @@ with register_tab:
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #888; font-size: 0.8rem;">
-    © 2023 数据分析助手 | <a href="#">隐私政策</a> | <a href="#">服务条款</a>
+    © 2023 Data Analysis Assistant | <a href="#">Privacy Policy</a> | <a href="#">Terms of Service</a>
 </div>
-""", unsafe_allow_html=True) 
+""", unsafe_allow_html=True)

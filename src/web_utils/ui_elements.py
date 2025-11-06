@@ -24,17 +24,17 @@ def display_sidebar_user_info(user_info):
         else:
             st.image(avatar_url, width=100)
         
-        # 显示用户名
+        # Username
         st.write(f"**{user_info['username']}**")
-        
-        # 简单显示统计信息，无额外容器
-        st.write(f"使用次数：{user_info['usage_count']}")
-        st.write(f"账号等级：{user_info['level']}")
+
+        # Simple stats
+        st.write(f"Usage count: {user_info['usage_count']}")
+        st.write(f"Account level: {user_info['level']}")
         
         st.markdown("---")
         
-        # 退出登录按钮
-        if st.button("退出登录", key="logout"):
+        # Logout
+        if st.button("Log out", key="logout"):
             st.session_state.user_info = None
             st.switch_page("login.py")
 
@@ -85,18 +85,18 @@ def display_dataframe_info(df):
     Args:
         df (pandas.DataFrame): 数据框
     """
-    st.write(f"数据形状: {df.shape[0]} 行 x {df.shape[1]} 列")
+    st.write(f"Shape: {df.shape[0]} rows x {df.shape[1]} columns")
     
     # 显示列信息
     col_info = ""
     for col in df.columns:
         col_info += f"- **{col}** ({df[col].dtype})\n"
     
-    st.markdown("### 列信息")
+    st.markdown("### Columns")
     st.markdown(col_info)
     
     # 显示数据预览
-    st.markdown("### 数据预览")
+    st.markdown("### Preview")
     st.dataframe(df.head(5))
 
 def create_file_uploader(label, file_types, key=None):

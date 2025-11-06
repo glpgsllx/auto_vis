@@ -5,6 +5,10 @@ import pandas as pd
 from datetime import datetime
 from typing import Dict, Tuple, List, Any, Union, Optional
 
+# Base paths anchored to project src directory to avoid recursive directories
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+SRC_ROOT = os.path.join(PROJECT_ROOT, "src")
+
 def ensure_dir_exists(directory: str) -> None:
     """确保目录存在，如果不存在则创建
     
@@ -23,7 +27,7 @@ def get_user_data_dir(user_id: str) -> str:
     Returns:
         str: 用户数据目录路径
     """
-    user_dir = f"data/users/{user_id}"
+    user_dir = os.path.join(SRC_ROOT, "data", "users", user_id)
     ensure_dir_exists(user_dir)
     return user_dir
 
@@ -37,7 +41,7 @@ def get_conversation_dir(user_id: str, conversation_id: str) -> str:
     Returns:
         str: 对话目录路径
     """
-    conv_dir = f"{get_user_data_dir(user_id)}/conversations/{conversation_id}"
+    conv_dir = os.path.join(get_user_data_dir(user_id), "conversations", conversation_id)
     ensure_dir_exists(conv_dir)
     return conv_dir
 
@@ -51,7 +55,7 @@ def get_conversation_images_dir(user_id: str, conversation_id: str) -> str:
     Returns:
         str: 对话图片目录路径
     """
-    images_dir = f"{get_conversation_dir(user_id, conversation_id)}/images"
+    images_dir = os.path.join(get_conversation_dir(user_id, conversation_id), "images")
     ensure_dir_exists(images_dir)
     return images_dir
 
@@ -65,7 +69,7 @@ def get_conversation_data_dir(user_id: str, conversation_id: str) -> str:
     Returns:
         str: 对话数据目录路径
     """
-    data_dir = f"{get_conversation_dir(user_id, conversation_id)}/data"
+    data_dir = os.path.join(get_conversation_dir(user_id, conversation_id), "data")
     ensure_dir_exists(data_dir)
     return data_dir
 
@@ -88,7 +92,7 @@ def save_dataframe(df: pd.DataFrame, user_id: str, conversation_id: str, file_na
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         file_name = f"data_{timestamp}.csv"
     
-    file_path = f"{data_dir}/{file_name}"
+    file_path = os.path.join(data_dir, file_name)
     df.to_csv(file_path, index=False)
     return file_path
 
@@ -112,7 +116,7 @@ def save_user_uploaded_file(uploaded_file, user_id: str, conversation_id: str) -
     # 生成新文件名
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     new_file_name = f"uploaded_{timestamp}{file_ext}"
-    file_path = f"{data_dir}/{new_file_name}"
+    file_path = os.path.join(data_dir, new_file_name)
     
     # 保存文件
     with open(file_path, "wb") as f:
@@ -141,7 +145,7 @@ def save_image(image_path: str, user_id: str, conversation_id: str, image_name: 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         image_name = f"chart_{timestamp}{file_ext}"
     
-    new_image_path = f"{images_dir}/{image_name}"
+    new_image_path = os.path.join(images_dir, image_name)
     
     # 复制图片文件
     shutil.copy2(image_path, new_image_path)
@@ -159,7 +163,7 @@ def get_mysql_connection_info_path(user_id: str, conversation_id: str) -> str:
         str: MySQL连接信息文件路径
     """
     data_dir = get_conversation_data_dir(user_id, conversation_id)
-    return f"{data_dir}/mysql_connection.json"
+    return os.path.join(data_dir, "mysql_connection.json")
 
 def create_data_source_info(file_type: str, file_path: str, user_id: str, conversation_id: str) -> Dict[str, Any]:
     """创建数据源信息
@@ -184,7 +188,7 @@ def create_data_source_info(file_type: str, file_path: str, user_id: str, conver
     else:
         # 复制文件到对话数据目录
         file_name = os.path.basename(file_path)
-        new_file_path = f"{data_dir}/{file_name}"
+        new_file_path = os.path.join(data_dir, file_name)
         
         if new_file_path != file_path:  # 避免复制到自身
             shutil.copy2(file_path, new_file_path)
@@ -201,8 +205,8 @@ def cleanup_temp_files(max_age_days: int = 7) -> None:
     Args:
         max_age_days: 文件最大保留天数
     """
-    # 清理codeexe目录中的临时文件
-    codeexe_dir = "codeexe"
+    # 清理 src/codeexe 目录中的临时文件
+    codeexe_dir = os.path.join(SRC_ROOT, "codeexe")
     if os.path.exists(codeexe_dir):
         now = datetime.now()
         for file_name in os.listdir(codeexe_dir):
