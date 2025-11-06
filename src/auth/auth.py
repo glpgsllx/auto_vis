@@ -22,8 +22,8 @@ def login_user(username, password):
         user_info = get_user(username)
         if user_info:
             update_last_login(username)
-            return True, "登录成功", user_info
-    return False, "用户名或密码错误", None
+            return True, "Login successful", user_info
+    return False, "Incorrect username or password", None
 
 def update_settings(username, settings):
     """更新用户设置"""

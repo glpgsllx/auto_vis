@@ -1,4 +1,4 @@
 import streamlit as st
 
-st.title("数据可视化")
-st.info("请在数据分析页面进行可视化操作") 
+st.title("Visualization")
+st.info("Please create visualizations in the Data Analysis page") 

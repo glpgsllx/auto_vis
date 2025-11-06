@@ -126,12 +126,12 @@ def execute_code(code, user_id: str, session_id: str, data_source_type: str, per
     """
     print(f"[Execute Code] Data source type: {data_source_type}")
     if not user_id or not session_id:
-        print("错误: execute_code 需要 user_id 和 session_id。")
-        return False, None, "错误: 缺少用户ID或会话ID。"
+        print("Error: execute_code requires user_id and session_id.")
+        return False, None, "Error: missing user_id or session_id."
     # --- 新增：检查文件类型参数 --- 
     if data_source_type in ['csv', 'excel'] and not persistent_file_path:
-         print(f"错误: 文件类型({data_source_type}) 需要 persistent_file_path。")
-         return False, None, f"错误: 文件类型({data_source_type}) 需要 persistent_file_path。"
+        print(f"Error: file type ({data_source_type}) requires persistent_file_path.")
+        return False, None, f"Error: file type ({data_source_type}) requires persistent_file_path."
 
     try: # --- Main Try Block Starts Here ---
         # --- 1. 构建目标图表路径 (不变) ---
@@ -172,7 +172,7 @@ plt.rcParams['svg.fonttype'] = 'none'  # 确保字体被正确嵌入到SVG中
             else:
                 modified_code = font_support_code + modified_code
         else:
-             modified_code = font_support_code + modified_code
+            modified_code = font_support_code + modified_code
 
         # --- 5. 处理数据加载路径/信息 --- 
         if data_source_type in ['csv', 'excel']:
@@ -189,19 +189,16 @@ plt.rcParams['svg.fonttype'] = 'none'  # 确保字体被正确嵌入到SVG中
 
 
         elif data_source_type == 'mysql':
-            # --- 修复：确保有 pass 或实际逻辑 --- 
+            # --- Ensure we can replace MySQL connection info ---
             if "mysql_connection_info" in st.session_state:
-                 conn_info = st.session_state.mysql_connection_info
-                 # ... (MySQL connection info replacement logic - should be here and complete) ...
-                 modified_code = modified_code.replace('host="localhost"', f'host="{conn_info["host"]}"') # Example
-                 # ... add all other replacements for port, user, pass, db, charset ...
-                 print(f"MySQL连接信息已替换 (来自 session_state): {conn_info}")
+                conn_info = st.session_state.mysql_connection_info
+                # Example minimal replacement; full logic is handled below in section 6
+                modified_code = modified_code.replace('host="localhost"', f'host="{conn_info["host"]}"')
+                masked = {k: ('***' if k == 'password' else v) for k, v in conn_info.items()}
+                print(f"MySQL connection info replaced (from session_state): {masked}")
             else:
-                 print("警告：无法替换 MySQL 连接信息，st.session_state 中未找到 mysql_connection_info。")
-            # --- Ensure MySQL connection string replacement (section 6 from previous state) is handled correctly --- 
-            # This section might be redundant if the above handles it
-            # if ("mysql.connector.connect" in modified_code or "pymysql.connect" in modified_code) ...:
-                 # ... (replacement logic) ...
+                print("Warning: MySQL connection info not found in st.session_state; cannot replace.")
+
             
         # --- 6. 处理MySQL连接信息 (保持不变) ---
         if ("mysql.connector.connect" in modified_code or "pymysql.connect" in modified_code) and "mysql_connection_info" in st.session_state:
@@ -213,56 +210,57 @@ plt.rcParams['svg.fonttype'] = 'none'  # 确保字体被正确嵌入到SVG中
                 "host='localhost'", f"host='{conn_info['host']}'"
             )
             if "port" in conn_info:
-                 modified_code = modified_code.replace(
-                     'port=3306', f'port={conn_info["port"]}'
-                 ).replace(
-                     "port=3306", f"port={conn_info['port']}"
-                 )
+                modified_code = modified_code.replace(
+                    'port=3306', f'port={conn_info["port"]}'
+                ).replace(
+                    "port=3306", f"port={conn_info['port']}"
+                )
             modified_code = modified_code.replace(
                 'user="root"', f'user="{conn_info["user"]}"'
             ).replace(
                 "user='root'", f"user='{conn_info['user']}'"
             )
             modified_code = modified_code.replace(
-                 'password="password"', f'password="{conn_info["password"]}"'
+                'password="password"', f'password="{conn_info["password"]}"'
             ).replace(
-                 'password=""', f'password="{conn_info["password"]}"'
+                'password=""', f'password="{conn_info["password"]}"'
             ).replace(
                 "password='password'", f"password='{conn_info['password']}'"
             ).replace(
                 "password=''", f"password='{conn_info['password']}'"
             )
             modified_code = modified_code.replace(
-                 'database="database_name"', f'database="{conn_info["database"]}"'
+                'database="database_name"', f'database="{conn_info["database"]}"'
             ).replace(
-                 "database='database_name'", f"database='{conn_info['database']}'"
-             )
+                "database='database_name'", f"database='{conn_info['database']}'"
+            )
             # (处理 charset 的逻辑也保持不变) ...
             if "charset" in conn_info:
-                 if "charset=" not in modified_code:
-                     connect_pos = modified_code.find("mysql.connector.connect(")
-                     if connect_pos == -1:
-                         connect_pos = modified_code.find("pymysql.connect(")
-                     if connect_pos != -1:
-                         bracket_count = 1
-                         for i in range(connect_pos + modified_code[connect_pos:].find("(") + 1, len(modified_code)):
-                             if modified_code[i] == "(": bracket_count += 1
-                             elif modified_code[i] == ")":
-                                 bracket_count -= 1
-                                 if bracket_count == 0:
-                                     modified_code = modified_code[:i] + f", charset='{conn_info['charset']}'" + modified_code[i:]
-                                     break
-                 else:
-                     modified_code = modified_code.replace(
+                if "charset=" not in modified_code:
+                    connect_pos = modified_code.find("mysql.connector.connect(")
+                    if connect_pos == -1:
+                        connect_pos = modified_code.find("pymysql.connect(")
+                    if connect_pos != -1:
+                        bracket_count = 1
+                        for i in range(connect_pos + modified_code[connect_pos:].find("(") + 1, len(modified_code)):
+                            if modified_code[i] == "(": bracket_count += 1
+                            elif modified_code[i] == ")":
+                                bracket_count -= 1
+                                if bracket_count == 0:
+                                    modified_code = modified_code[:i] + f", charset='{conn_info['charset']}'" + modified_code[i:]
+                                    break
+                else:
+                    modified_code = modified_code.replace(
                          'charset="utf8"', f'charset="{conn_info["charset"]}"'
-                     ).replace(
+                    ).replace(
                          "charset='utf8'", f"charset='{conn_info['charset']}'"
-                     ).replace(
+                    ).replace(
                           'charset="utf8mb4"', f'charset="{conn_info["charset"]}"'
-                     ).replace(
+                    ).replace(
                          "charset='utf8mb4'", f"charset='{conn_info['charset']}'"
-                     )
-            print(f"MySQL连接信息: {conn_info}")
+                    )
+            masked = {k: ('***' if k == 'password' else v) for k, v in conn_info.items()}
+            print(f"MySQL connection info: {masked}")
 
         print("执行的代码 (路径替换后):")
         print("-" * 50)
@@ -299,7 +297,7 @@ plt.rcParams['svg.fonttype'] = 'none'  # 确保字体被正确嵌入到SVG中
             return False, None, execution_result.output  # 失败时保留原始输出，包括警告，便于调试
 
     except Exception as e:
-        error_msg = f"执行代码时发生严重错误：{str(e)}\n{traceback.format_exc()}"
+        error_msg = f"Critical error during code execution: {str(e)}\n{traceback.format_exc()}"
         print(error_msg)
         return False, None, error_msg
 

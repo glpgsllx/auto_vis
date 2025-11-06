@@ -65,10 +65,13 @@ with st.sidebar:
         # 显示用户头像
         avatar_url = st.session_state.user_info.get('avatar_url', 'https://ui-avatars.com/api/?name=' + st.session_state.user_info.get('username', 'User') + '&background=random')
         
-        # 检查头像路径是否存在
+        # 检查头像路径是否存在（使用基于 src 的绝对路径）
         if avatar_url.startswith('data/avatars/'):
-            if os.path.exists(avatar_url):
-                st.image(avatar_url, width=100)
+            project_root = os.path.abspath(os.path.dirname(__file__))
+            src_root = os.path.join(project_root, "src")
+            abs_path = os.path.join(src_root, avatar_url.replace("/", os.sep))
+            if os.path.exists(abs_path):
+                st.image(abs_path, width=100)
             else:
                 # 如果头像文件不存在，使用默认头像
                 default_avatar = 'https://ui-avatars.com/api/?name=' + st.session_state.user_info.get('username', 'User') + '&background=random'
