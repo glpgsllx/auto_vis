@@ -49,39 +49,6 @@ auto_vis/
 - Python 3.10+
 - 本地可用的 MongoDB（默认连接 `mongodb://localhost:27017/`，数据库名 `data_analysis_web`）
 
-## 安装与运行（快速开始）
-
-1. 克隆本仓库
-```bash
-git clone https://github.com/yourusername/auto_vis.git
-cd auto_vis
-```
-
-2. 安装依赖（建议在虚拟环境中执行）
-```bash
-pip install -r requirements.txt
-```
-
-3. 启动/确保 MongoDB 运行在本地 27017 端口
-- macOS（Homebrew）：`brew services start mongodb-community`
-- 其他方式：手动运行 `mongod` 并指定数据目录
-
-4. 设置环境变量
-```bash
-export MODELSCOPE_API_KEY=your_api_key
-```
-
-5. 启动应用（推荐）
-```bash
-chmod +x run.sh
-./run.sh
-```
-
-若不使用脚本，也可直接运行：
-```bash
-streamlit run src/app.py
-```
-
 ## Docker 部署
 
 1. 拉取镜像
