@@ -8,9 +8,7 @@ __pycache__/
 
 # 项目特定目录
 .cache/
-codeexe/
-data/
-images/
+
 
 src/.cache/
 src/codeexe/

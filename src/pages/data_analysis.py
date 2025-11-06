@@ -1013,8 +1013,34 @@ elif st.session_state.get('file_uploaded') and st.session_state.get('description
                                     if text_after:
                                         st.write(text_after)
                                 else:
-                                    # 没有代码块，直接显示内容
-                                    st.write(content)
+                                    # 没有代码块，尝试启发式识别是否为代码
+                                    looks_like_code = False
+                                    code_hints = [
+                                        "import ",
+                                        "pd.read_",
+                                        "plt.",
+                                        "def ",
+                                        "= plt.figure",
+                                        "savefig(",
+                                        "read_sql(",
+                                    ]
+                                    for hint in code_hints:
+                                        if hint in content:
+                                            looks_like_code = True
+                                            break
+
+                                    if looks_like_code:
+                                        display_code = content.strip()
+                                        st.code(display_code, language="python")
+                                        st.button(
+                                            "应用此代码",
+                                            key=f"apply_code_{message_id}_{message_index}",
+                                            on_click=apply_code_callback,
+                                            args=(display_code,)
+                                        )
+                                    else:
+                                        # 不是代码，直接显示内容
+                                        st.write(content)
                             else:
                                 # 非助手消息，直接显示
                                 st.write(content)
@@ -1291,6 +1317,8 @@ elif st.session_state.get('file_uploaded') and st.session_state.get('description
                                                     st.markdown("我已经根据您的要求生成了可视化图表：")
                                                     display_svg_with_controls(image_path, message_id=f"regen_{uuid.uuid4().hex}")
                                                     
+                                                    explanation = ""
+
                                                     if output_text.strip():
                                                         # 添加分析中消息
                                                         analysis_placeholder = st.empty()
@@ -1363,6 +1391,7 @@ elif st.session_state.get('file_uploaded') and st.session_state.get('description
                                                     from src.ai.streaming import process_analysis_streaming
                                                     
                                                     # 流式处理分析结果
+                                                    
                                                     explanation = process_analysis_streaming(
                                                         output_text,
                                                         st.session_state.get('current_input', '分析数据'),
@@ -1420,4 +1449,3 @@ if "default_chart_width" not in st.session_state:  # 默认图表宽度
     st.session_state.default_chart_width = 600
 if "default_chart_height" not in st.session_state:  # 默认图表高度
     st.session_state.default_chart_height = 400
-
