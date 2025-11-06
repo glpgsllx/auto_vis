@@ -5,11 +5,19 @@ import streamlit as st
 import uuid
 
 # 配置大语言模型
+# config_list = [
+#     {
+#         "model": "Qwen/Qwen2.5-72B-Instruct", 
+#         "api_key": os.environ.get("MODELSCOPE_API_KEY"), 
+#         "base_url": "https://api-inference.modelscope.cn/v1/"
+#     }
+# ]
+
 config_list = [
     {
-        "model": "Qwen/Qwen2.5-72B-Instruct", 
-        "api_key": os.environ.get("MODELSCOPE_API_KEY"), 
-        "base_url": "https://api-inference.modelscope.cn/v1/"
+        "model": "qwen2.5-72b-instruct", 
+        "api_key": "sk-NEuZniCRXEmJjiQ5CHNl8rtTDKcDogk04vUdjUgX7Zjpm9PU", 
+        "base_url": "https://yunwu.ai/v1",
     }
 ]
 

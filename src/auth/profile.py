@@ -15,17 +15,14 @@ def display_user_profile(user_info):
         # 显示当前头像
         avatar_url = user_info.get('avatar_url', 'https://ui-avatars.com/api/?name=' + user_info.get('username', 'User') + '&background=random')
         
-        # 检查头像路径是否存在
+        # 检查头像路径是否存在（使用基于 src 的绝对路径）
         if avatar_url.startswith('data/avatars/'):
-            # 如果在src目录下运行，需要添加../ 
-            avatar_path = avatar_url
-            if not os.path.exists(avatar_path) and os.path.exists("../"+avatar_path):
-                avatar_path = "../" + avatar_path
-                
-            if os.path.exists(avatar_path):
-                st.image(avatar_path, caption="当前头像", width=150)
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            src_root = os.path.join(project_root, "src")
+            abs_path = os.path.join(src_root, avatar_url.replace("/", os.sep))
+            if os.path.exists(abs_path):
+                st.image(abs_path, caption="当前头像", width=150)
             else:
-                # 如果头像文件不存在，使用默认头像
                 default_avatar = 'https://ui-avatars.com/api/?name=' + user_info.get('username', 'User') + '&background=random'
                 st.image(default_avatar, caption="当前头像", width=150)
         else:
@@ -50,14 +47,11 @@ def handle_avatar_upload(user_info):
     Returns:
         bool: 是否成功上传
     """
-    # 确定数据目录路径
-    data_dir = "data/avatars"
-    if not os.path.exists(data_dir) and os.path.exists("../data/avatars"):
-        data_dir = "../data/avatars"
-        
-    # 创建头像存储目录
-    if not os.path.exists(data_dir):
-        os.makedirs(data_dir)
+    # 确定数据目录路径（固定到 src/data/avatars）
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    src_root = os.path.join(project_root, "src")
+    data_dir = os.path.join(src_root, "data", "avatars")
+    os.makedirs(data_dir, exist_ok=True)
     
     st.write("更新头像")
     
@@ -70,18 +64,12 @@ def handle_avatar_upload(user_info):
         # 删除用户之前的头像文件（如果有）
         old_avatar_url = user_info.get('avatar_url', '')
         if old_avatar_url.startswith('data/avatars/'):
-            # 检查两种可能的路径
-            old_paths = [old_avatar_url]
-            if not os.path.exists(old_avatar_url):
-                old_paths.append("../" + old_avatar_url)
-                
-            for path in old_paths:
-                if os.path.exists(path):
-                    try:
-                        os.remove(path)
-                        break
-                    except Exception as e:
-                        st.warning(f"无法删除旧头像文件: {e}")
+            abs_old = os.path.join(src_root, old_avatar_url.replace("/", os.sep))
+            if os.path.exists(abs_old):
+                try:
+                    os.remove(abs_old)
+                except Exception as e:
+                    st.warning(f"无法删除旧头像文件: {e}")
         
         # 使用用户名作为文件名基础，避免生成过多文件
         file_extension = os.path.splitext(uploaded_file.name)[1]

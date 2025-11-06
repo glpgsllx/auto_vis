@@ -11,17 +11,14 @@ def display_sidebar_user_info(user_info):
         # 显示用户头像
         avatar_url = user_info.get('avatar_url', 'https://ui-avatars.com/api/?name=' + user_info.get('username', 'User') + '&background=random')
         
-        # 检查头像路径是否存在
+        # 检查头像路径是否存在（使用基于 src 的绝对路径）
         if avatar_url.startswith('data/avatars/'):
-            # 如果在src目录下运行，需要添加../ 
-            avatar_path = avatar_url
-            if not os.path.exists(avatar_path) and os.path.exists("../"+avatar_path):
-                avatar_path = "../" + avatar_path
-                
-            if os.path.exists(avatar_path):
-                st.image(avatar_path, width=100)
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            src_root = os.path.join(project_root, "src")
+            abs_path = os.path.join(src_root, avatar_url.replace("/", os.sep))
+            if os.path.exists(abs_path):
+                st.image(abs_path, width=100)
             else:
-                # 如果头像文件不存在，使用默认头像
                 default_avatar = 'https://ui-avatars.com/api/?name=' + user_info.get('username', 'User') + '&background=random'
                 st.image(default_avatar, width=100)
         else:

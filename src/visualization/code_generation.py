@@ -7,13 +7,29 @@ import streamlit as st
 import pymysql
 
 # 配置大语言模型
+# config_list = [
+#     {
+#         "model": "Qwen/Qwen2.5-72B-Instruct", 
+#         "api_key": os.environ.get("MODELSCOPE_API_KEY"), 
+#         "base_url": "https://api-inference.modelscope.cn/v1/"
+#     }
+# ]
+
 config_list = [
     {
-        "model": "Qwen/Qwen2.5-72B-Instruct", 
-        "api_key": os.environ.get("MODELSCOPE_API_KEY"), 
-        "base_url": "https://api-inference.modelscope.cn/v1/"
+        "model": "qwen2.5-72b-instruct", 
+        "api_key": "sk-NEuZniCRXEmJjiQ5CHNl8rtTDKcDogk04vUdjUgX7Zjpm9PU", 
+        "base_url": "https://yunwu.ai/v1",
     }
 ]
+
+# config_list = [
+#     {
+#         "model": "/model", 
+#         "api_key": os.environ.get("MODELSCOPE_API_KEY"), 
+#         "base_url": "http://101.42.22.132:8000/v1"
+#     }
+# ]
 
 def generate_code(file_path, column_descriptions):
     """生成可视化代码的函数 (处理直接文件路径输入)"""

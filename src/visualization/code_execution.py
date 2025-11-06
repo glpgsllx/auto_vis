@@ -99,11 +99,15 @@ def filter_warnings(output_text):
     print(f"[filter_warnings] 过滤完成，原始行数: {len(lines)}, 过滤后行数: {len(filtered_lines)}")
     return filtered_text.strip()
 
-# 创建一个本地命令行代码执行器，工作目录设定为 codeexe
+# 创建一个本地命令行代码执行器，工作目录设定为 src/codeexe 的绝对路径
 # 注意：所有在代码中使用的相对路径都是相对于这个 work_dir
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+SRC_ROOT = os.path.join(PROJECT_ROOT, "src")
+WORK_DIR_ABS = os.path.join(SRC_ROOT, "codeexe")
+
 executor = LocalCommandLineCodeExecutor(
     timeout=20,  # 增加超时时间
-    work_dir="codeexe",
+    work_dir=WORK_DIR_ABS,
 )
 
 def execute_code(code, user_id: str, session_id: str, data_source_type: str, persistent_file_path: str | None = None, image_id=None):

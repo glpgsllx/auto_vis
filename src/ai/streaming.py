@@ -10,9 +10,13 @@ class StreamingLLM:
     
     def __init__(self):
         # self.api_key = os.environ.get("MODELSCOPE_API_KEY")
-        self.api_key = "sk-gJ3cBOaXnX40AE5XVpSyeVmnDgdrDJctFoM44oHegCYeP3JS"
-        self.base_url = "https://yunwu.ai/v1/chat/completions"
+        # self.api_key = "sk-gJ3cBOaXnX40AE5XVpSyeVmnDgdrDJctFoM44oHegCYeP3JS"
+        # self.base_url = "https://yunwu.ai/v1/chat/completions"
+        # self.base_url = "http://101.42.22.132:8000/v1/chat/completions"
+        self.api_key = "sk-NEuZniCRXEmJjiQ5CHNl8rtTDKcDogk04vUdjUgX7Zjpm9PU"
         self.model = "qwen2.5-72b-instruct"
+        self.base_url = "https://yunwu.ai/v1"
+        # self.model = "/model"
         
         if not self.api_key:
             raise ValueError("环境变量MODELSCOPE_API_KEY未设置")
@@ -45,7 +49,7 @@ class StreamingLLM:
         payload = self._create_payload(messages, stream)
         
         response = requests.post(
-            self.base_url,
+            f"{self.base_url}/chat/completions",
             headers=headers,
             json=payload,
             stream=stream
@@ -163,10 +167,11 @@ def get_streaming_response(user_message, data_context, history: list = None, mes
       - 确保代码能独立运行（包含必要的import）
       - 务必将最终生成的图表保存为'answer.svg'
       - 不要使用seaborn、plotly或其他可视化库
+      - 输出格式必须为【单个】Markdown 代码块，使用```python 开头并以```结尾；不要输出任何额外文字或说明
 
    B. 如果用户需要数据分析或计算（如均值、总和、排序等统计分析）:
       - 生成简洁的计算代码
-      - 使用print()函数打印结果，格式清晰易读
+      - 使用print()函数打印用户的问题和结果，格式清晰易读
       - 不要包含图表生成或保存代码
       - 确保输出结果便于阅读和理解
 
@@ -248,6 +253,9 @@ def process_analysis_streaming(output_text, user_query, data_context=None, messa
                     context_desc += f"- {col}: {desc}\n"
     
     # 构建完整提示
+    print("*" * 100)
+    print(user_query)
+    print("*" * 100)
     prompt = f"""基于以下代码执行结果，对用户的问题"{user_query}"进行专业解释：
 
 执行结果:
